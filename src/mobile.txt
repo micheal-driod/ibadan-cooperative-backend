@@ -1,0 +1,20 @@
+24, loan_application_id: 12, guarantor_no: 2, full_name: Test User Member, staff_no: 008199, phone: 08035550000
+I/VRI[MainActivity]@ade1ee( 3901): call setFrameRateCategory for touch hint category=no preference, reason=boost timeout, vri=VRI[MainActivity]@ade1ee
+Lost connection to device.
+
+
+
+from storage.dart to dashboard screen i do not see it or know where they are but you should cause you have the memory so pls stop giving me tough work to do
+
+password request is showing this while trying to approve password change:
+Invalid `tx.memberCredentialLog.create()` invocation in C:\akure-cooperative-system\cooperative_backend\src\controllers\passwordRequestAdminController.js:86:36 83 }, 84 }); 85 → 86 await tx.memberCredentialLog.create({ data: { member_id: 25, staff_no: "002123", full_name: "Jessica A JO", credential_type: "PASSWORD_RESET", ~~~~~~~~~~~~~~~~ plain_password: "IBF0021234842", generated_by: 2 } }) Invalid value for argument `credential_type`. Expected CredentialType.
+
+i will send all the files but then do this also;
+
+i want the mobile app to showing pending loan after loan has being submitted so there will be a button to click to show all loan history in the loans page, so it work like pop up page if possible, cause i want user to be able to see pending loan while on pending or rejected while not apporoved, so lets adjust loans page inother loan can get history and then loan term loan interest is 6% simple imterest not 12% cause i see that you made it as 6% on 1,000,000 but it  should be 6% on any principal okay and lets make repayment colours to be purple not red like loan taken,  give me related code for all what i said and it should be full code.
+i want account details be printed while printing loan form as well as contact address but the interface should remain as it is but only the printing page should show the full details 
+
+we should be able to bulk posting and edit in case of wrong input or adjustment for the month
+
+
+

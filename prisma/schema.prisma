@@ -1,0 +1,371 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Role {
+  id         Int         @id @default(autoincrement())
+  role_name  String      @unique
+  staffUsers StaffUser[]
+  created_at DateTime    @default(now())
+}
+
+model StaffUser {
+  id            Int      @id @default(autoincrement())
+  full_name     String
+  email         String   @unique
+  password_hash String
+  phone         String?
+  role_id       Int
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  role                           Role                        @relation(fields: [role_id], references: [id])
+  approved_loans                 Loan[]                      @relation("ApprovedLoans")
+  ledger_entries                 MemberLedger[]
+  reviewed_password_requests     PasswordChangeRequest[]     @relation("PasswordRequestReviewer")
+  reviewed_registration_requests MemberRegistrationRequest[] @relation("RegistrationRequestReviewer")
+  generated_credentials          MemberCredentialLog[]       @relation("GeneratedCredentials")
+}
+
+model Member {
+  id                Int          @id @default(autoincrement())
+  staff_no          String       @unique
+  membership_no     String?      @unique
+  first_name        String
+  middle_name       String?
+  last_name         String
+  phone             String?
+  email             String?      @unique
+  department        Department?
+  address           String?
+  employment_status String?
+  grade_level       String?
+  purpose           String?
+  date_joined       DateTime?
+  status            MemberStatus @default(active)
+
+  bank_name      String?
+  account_name   String?
+  account_number String?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  user_account             UserAccount?
+  loan_applications        LoanApplication[]
+  loans                    Loan[]
+  loan_balances            MemberLoanBalance[]
+  savings_account          SavingsAccount?
+  shares_account           SharesAccount?
+  ledger_entries           MemberLedger[]
+  password_change_requests PasswordChangeRequest[]
+  credential_logs          MemberCredentialLog[]
+}
+
+model MemberRegistrationRequest {
+  id                Int                             @id @default(autoincrement())
+  staff_no          String                          @unique
+  membership_no     String?
+  first_name        String
+  middle_name       String?
+  last_name         String
+  phone             String?
+  email             String?
+  department        Department?
+  address           String?
+  employment_status String?
+  grade_level       String?
+  purpose           String?
+  date_joined       DateTime?
+  status            MemberRegistrationRequestStatus @default(pending)
+  admin_note        String?
+  reviewed_by       Int?
+  reviewed_at       DateTime?
+  created_at        DateTime                        @default(now())
+  updated_at        DateTime                        @updatedAt
+
+  reviewer StaffUser? @relation("RegistrationRequestReviewer", fields: [reviewed_by], references: [id])
+
+  @@index([reviewed_by])
+}
+
+enum MemberRegistrationRequestStatus {
+  pending
+  approved
+  rejected
+}
+
+model UserAccount {
+  id                   Int       @id @default(autoincrement())
+  member_id            Int       @unique
+  username             String    @unique
+  password_hash        String
+  must_change_password Boolean   @default(true)
+  last_login           DateTime?
+  is_active            Boolean   @default(true)
+  created_at           DateTime  @default(now())
+  updated_at           DateTime  @updatedAt
+
+  member Member @relation(fields: [member_id], references: [id], onDelete: Cascade)
+}
+
+model LoanType {
+  id                  Int      @id @default(autoincrement())
+  name                String   @unique
+  interest_rate       Decimal  @db.Decimal(10, 2)
+  min_duration_months Int      @default(1)
+  max_duration_months Int      @default(1)
+  min_amount          Decimal? @db.Decimal(15, 2)
+  max_amount          Decimal? @db.Decimal(15, 2)
+  is_active           Boolean  @default(true)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  loan_applications LoanApplication[]
+  loans             Loan[]
+}
+
+model LoanApplication {
+  id                Int                   @id @default(autoincrement())
+  member_id         Int
+  loan_type_id      Int
+  requested_amount  Decimal               @db.Decimal(15, 2)
+  interest_rate     Decimal               @db.Decimal(10, 2)
+  duration_months   Int
+  interest_amount   Decimal               @db.Decimal(15, 2)
+  total_repayment   Decimal               @db.Decimal(15, 2)
+  monthly_deduction Decimal               @db.Decimal(15, 2)
+  loan_purpose      String
+  status            LoanApplicationStatus @default(submitted)
+  rejection_reason  String?
+  review_note       String?
+  reviewed_by       Int?
+  viewed_at         DateTime?
+  reviewed_at       DateTime?
+  created_at        DateTime              @default(now())
+  updated_at        DateTime              @updatedAt
+
+  member     Member                     @relation(fields: [member_id], references: [id], onDelete: Cascade)
+  loan_type  LoanType                   @relation(fields: [loan_type_id], references: [id])
+  guarantors LoanApplicationGuarantor[]
+  loan       Loan?
+
+  @@index([member_id])
+  @@index([loan_type_id])
+}
+
+model LoanApplicationGuarantor {
+  id                  Int      @id @default(autoincrement())
+  loan_application_id Int
+  guarantor_no        Int
+  full_name           String
+  staff_no            String
+  phone               String
+  grade_level         String
+  created_at          DateTime @default(now())
+
+  loan_application LoanApplication @relation(fields: [loan_application_id], references: [id], onDelete: Cascade)
+
+  @@index([loan_application_id])
+}
+
+model Loan {
+  id                          Int        @id @default(autoincrement())
+  member_id                   Int
+  loan_application_id         Int        @unique
+  loan_type_id                Int
+  principal_amount            Decimal    @db.Decimal(15, 2)
+  interest_amount             Decimal    @db.Decimal(15, 2)
+  total_payable               Decimal    @db.Decimal(15, 2)
+  monthly_deduction           Decimal    @db.Decimal(15, 2)
+  duration_months             Int
+  remaining_principal_balance Decimal    @default(0) @db.Decimal(15, 2)
+  remaining_interest_balance  Decimal    @default(0) @db.Decimal(15, 2)
+  remaining_total_balance     Decimal    @default(0) @db.Decimal(15, 2)
+  status                      LoanStatus @default(active)
+  approved_by                 Int
+  approved_at                 DateTime
+  created_at                  DateTime   @default(now())
+  updated_at                  DateTime   @updatedAt
+
+  member           Member          @relation(fields: [member_id], references: [id], onDelete: Cascade)
+  loan_application LoanApplication @relation(fields: [loan_application_id], references: [id], onDelete: Cascade)
+  loan_type        LoanType        @relation(fields: [loan_type_id], references: [id])
+  approver         StaffUser       @relation("ApprovedLoans", fields: [approved_by], references: [id])
+  ledger_entries   MemberLedger[]
+
+  @@index([member_id])
+  @@index([loan_type_id])
+  @@index([approved_by])
+}
+
+model SavingsAccount {
+  id                        Int      @id @default(autoincrement())
+  member_id                 Int      @unique
+  current_balance           Decimal  @default(0) @db.Decimal(15, 2)
+  total_contributed         Decimal  @default(0) @db.Decimal(15, 2)
+  special_savings_balance   Decimal  @default(0) @db.Decimal(15, 2)
+  total_special_contributed Decimal  @default(0) @db.Decimal(15, 2)
+  created_at                DateTime @default(now())
+  updated_at                DateTime @updatedAt
+
+  member Member @relation(fields: [member_id], references: [id], onDelete: Cascade)
+}
+
+model SharesAccount {
+  id              Int      @id @default(autoincrement())
+  member_id       Int      @unique
+  current_balance Decimal  @default(0) @db.Decimal(15, 2)
+  total_shares    Decimal  @default(0) @db.Decimal(15, 2)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  member Member @relation(fields: [member_id], references: [id], onDelete: Cascade)
+}
+
+model MemberLedger {
+  id            Int             @id @default(autoincrement())
+  member_id     Int
+  staff_user_id Int
+  loan_id       Int?
+  entry_type    LedgerEntryType
+  entry_label   String?
+  amount        Decimal         @db.Decimal(15, 2)
+  month         Int
+  year          Int
+  description   String?
+  created_at    DateTime        @default(now())
+
+  member     Member    @relation(fields: [member_id], references: [id], onDelete: Cascade)
+  staff_user StaffUser @relation(fields: [staff_user_id], references: [id])
+  loan       Loan?     @relation(fields: [loan_id], references: [id])
+
+  @@index([member_id])
+  @@index([staff_user_id])
+  @@index([loan_id])
+  @@index([month, year])
+}
+
+
+model PasswordChangeRequest {
+  id                 Int                         @id @default(autoincrement())
+  member_id          Int
+  current_password   String
+  new_password_hash  String
+  new_password_plain String?
+  status             PasswordChangeRequestStatus @default(pending)
+  admin_note         String?
+  reviewed_by        Int?
+  reviewed_at        DateTime?
+  created_at         DateTime                    @default(now())
+  updated_at         DateTime                    @updatedAt
+
+  member   Member     @relation(fields: [member_id], references: [id], onDelete: Cascade)
+  reviewer StaffUser? @relation("PasswordRequestReviewer", fields: [reviewed_by], references: [id])
+
+  @@index([member_id])
+  @@index([reviewed_by])
+}
+
+enum PasswordChangeRequestStatus {
+  pending
+  approved
+  rejected
+}
+
+enum MemberStatus {
+  active
+  inactive
+  suspended
+}
+
+enum LoanApplicationStatus {
+  submitted
+  viewed
+  approved
+  rejected
+  active
+  completed
+}
+
+enum LoanStatus {
+  active
+  completed
+  defaulted
+}
+
+enum LedgerEntryType {
+  SAVINGS
+  SPECIAL_SAVINGS
+  SHARES
+  LOAN_COLLECTED
+  LOAN_REPAYMENT
+  LOAN_INTEREST_DEDUCTION
+  CHARGES
+  FINES
+  ADJUSTMENT
+}
+
+enum Department {
+  ARFFS
+  AVSEC
+  COMMERCIAL
+  STORE
+  ENVIRONMENT
+  ICT
+  ACCOUNTS
+  AUDIT
+  CREDIT_CONTROL
+  SAFETY
+  OTHERS
+}
+
+model MemberCredentialLog {
+  id              Int            @id @default(autoincrement())
+  member_id       Int
+  staff_no        String
+  full_name       String
+  credential_type CredentialType @default(INITIAL)
+  plain_password  String
+  generated_by    Int
+  created_at      DateTime       @default(now())
+
+  member    Member    @relation(fields: [member_id], references: [id], onDelete: Cascade)
+  generator StaffUser @relation("GeneratedCredentials", fields: [generated_by], references: [id])
+
+  @@index([member_id])
+  @@index([generated_by])
+}
+
+enum CredentialType {
+  INITIAL
+  RESET
+}
+
+enum LoanBucketType {
+  LONG_TERM
+  SOFT
+  COMMODITY
+}
+
+model MemberLoanBalance {
+  id                Int            @id @default(autoincrement())
+  member_id         Int
+  loan_bucket_type  LoanBucketType
+  principal_balance Decimal        @default(0) @db.Decimal(18, 2)
+  interest_balance  Decimal        @default(0) @db.Decimal(18, 2)
+  total_balance     Decimal        @default(0) @db.Decimal(18, 2)
+  last_updated_by   Int?
+  created_at        DateTime       @default(now())
+  updated_at        DateTime       @updatedAt
+
+  member Member @relation(fields: [member_id], references: [id], onDelete: Cascade)
+
+  @@unique([member_id, loan_bucket_type])
+}
