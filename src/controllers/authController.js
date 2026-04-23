@@ -6,6 +6,12 @@ const staffLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    if (!email || !password) {
+      return res.status(400).json({
+        message: "Email and password are required",
+      });
+    }
+
     const staff = await prisma.staffUser.findUnique({
       where: { email },
       include: { role: true },
@@ -23,6 +29,10 @@ const staffLogin = async (req, res) => {
 
     if (!isMatch) {
       return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    if (!staff.role) {
+      return res.status(500).json({ message: "Staff role is missing" });
     }
 
     const token = generateToken({
@@ -43,7 +53,9 @@ const staffLogin = async (req, res) => {
     });
   } catch (error) {
     console.error("staffLogin error:", error);
-    return res.status(500).json({ message: "Server error" });
+    return res.status(500).json({
+      message: error.message || "Server error",
+    });
   }
 };
 
@@ -105,7 +117,9 @@ const memberLogin = async (req, res) => {
     });
   } catch (error) {
     console.error("memberLogin error:", error);
-    return res.status(500).json({ message: "Server error" });
+    return res.status(500).json({
+      message: error.message || "Server error",
+    });
   }
 };
 
@@ -147,7 +161,9 @@ const memberChangePassword = async (req, res) => {
     });
   } catch (error) {
     console.error("memberChangePassword error:", error);
-    return res.status(500).json({ message: "Server error" });
+    return res.status(500).json({
+      message: error.message || "Server error",
+    });
   }
 };
 
