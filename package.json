@@ -13,7 +13,7 @@
     "dev": "nodemon src/app.js",
     "start": "node src/app.js",
     "postinstall": "prisma generate",
-    "migrate:deploy": "prisma migrate deploy",
+    "migrate:deploy": "echo Skipping migration on Railway"
     "seed": "node prisma/seed.js"
   },
 
