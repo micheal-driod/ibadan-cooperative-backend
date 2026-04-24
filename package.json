@@ -8,15 +8,13 @@
   "engines": {
     "node": "20.x"
   },
-
-  "scripts": {
-    "dev": "nodemon src/app.js",
-    "start": "node src/app.js",
-    "postinstall": "prisma generate",
-    "migrate:deploy": "echo Skipping migration on Railway"
-    "seed": "node prisma/seed.js"
-  },
-
+"scripts": {
+  "dev": "nodemon src/app.js",
+  "start": "node src/app.js",
+  "postinstall": "prisma generate",
+  "migrate:deploy": "echo Skipping migration on Railway",
+  "seed": "node prisma/seed.js"
+},
   "keywords": [],
   "author": "",
   "license": "ISC",
