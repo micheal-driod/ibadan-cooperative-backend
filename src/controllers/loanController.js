@@ -74,7 +74,7 @@ const applyForLoan = async (req, res) => {
         total_repayment: totalRepayment,
         monthly_deduction: monthlyDeduction,
         loan_purpose: finalPurpose,
-        status: "submitted",
+        status: "pending",
       },
       include: {
         loan_type: true,
@@ -105,10 +105,10 @@ const getAllLoanApplications = async (req, res) => {
       orderBy: { created_at: "desc" },
     });
 
-    return res.status(200).json(loans);
+    res.status(200).json(loans);
   } catch (error) {
     console.error("getAllLoanApplications error:", error);
-    return res.status(500).json({ message: error.message || "Server error" });
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -116,10 +116,6 @@ const getAllLoanApplications = async (req, res) => {
 const getLoanApplicationById = async (req, res) => {
   try {
     const loanId = Number(req.params.id);
-
-    if (!loanId) {
-      return res.status(400).json({ message: "Invalid loan id" });
-    }
 
     const loan = await prisma.loanApplication.findUnique({
       where: { id: loanId },
@@ -133,10 +129,10 @@ const getLoanApplicationById = async (req, res) => {
       return res.status(404).json({ message: "Loan not found" });
     }
 
-    return res.status(200).json(loan);
+    res.status(200).json(loan);
   } catch (error) {
     console.error("getLoanApplicationById error:", error);
-    return res.status(500).json({ message: error.message || "Server error" });
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -145,25 +141,18 @@ const markLoanAsViewed = async (req, res) => {
   try {
     const loanId = Number(req.params.id);
 
-    if (!loanId) {
-      return res.status(400).json({ message: "Invalid loan id" });
-    }
-
     const loan = await prisma.loanApplication.update({
       where: { id: loanId },
-      data: {
-        status: "viewed",
-        viewed_at: new Date(),
-      },
+      data: { viewed_at: new Date() },
     });
 
-    return res.status(200).json({
+    res.status(200).json({
       message: "Loan marked as viewed",
       loan,
     });
   } catch (error) {
     console.error("markLoanAsViewed error:", error);
-    return res.status(500).json({ message: error.message || "Server error" });
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -171,10 +160,6 @@ const markLoanAsViewed = async (req, res) => {
 const approveLoanApplication = async (req, res) => {
   try {
     const loanId = Number(req.params.id);
-
-    if (!loanId) {
-      return res.status(400).json({ message: "Invalid loan id" });
-    }
 
     const loan = await prisma.loanApplication.update({
       where: { id: loanId },
@@ -185,13 +170,13 @@ const approveLoanApplication = async (req, res) => {
       },
     });
 
-    return res.status(200).json({
+    res.status(200).json({
       message: "Loan approved successfully",
       loan,
     });
   } catch (error) {
     console.error("approveLoanApplication error:", error);
-    return res.status(500).json({ message: error.message || "Server error" });
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -200,10 +185,6 @@ const rejectLoanApplication = async (req, res) => {
   try {
     const loanId = Number(req.params.id);
     const { rejection_reason } = req.body;
-
-    if (!loanId) {
-      return res.status(400).json({ message: "Invalid loan id" });
-    }
 
     if (!rejection_reason) {
       return res.status(400).json({
@@ -221,65 +202,27 @@ const rejectLoanApplication = async (req, res) => {
       },
     });
 
-    return res.status(200).json({
+    res.status(200).json({
       message: "Loan rejected successfully",
       loan,
     });
   } catch (error) {
     console.error("rejectLoanApplication error:", error);
-    return res.status(500).json({ message: error.message || "Server error" });
+    res.status(500).json({ message: error.message });
   }
 };
 
-// ACTIVE LOANS
+// ACTIVE LOANS (placeholder for now)
 const getAllActiveLoans = async (req, res) => {
-  try {
-    const loans = await prisma.loanApplication.findMany({
-      where: {
-        status: "active",
-      },
-      include: {
-        loan_type: true,
-        member: true,
-      },
-      orderBy: { created_at: "desc" },
-    });
-
-    return res.status(200).json(loans);
-  } catch (error) {
-    console.error("getAllActiveLoans error:", error);
-    return res.status(500).json({ message: error.message || "Server error" });
-  }
+  res.status(200).json({
+    message: "Active loans feature coming next",
+  });
 };
 
 const getActiveLoanById = async (req, res) => {
-  try {
-    const loanId = Number(req.params.id);
-
-    if (!loanId) {
-      return res.status(400).json({ message: "Invalid loan id" });
-    }
-
-    const loan = await prisma.loanApplication.findFirst({
-      where: {
-        id: loanId,
-        status: "active",
-      },
-      include: {
-        loan_type: true,
-        member: true,
-      },
-    });
-
-    if (!loan) {
-      return res.status(404).json({ message: "Active loan not found" });
-    }
-
-    return res.status(200).json(loan);
-  } catch (error) {
-    console.error("getActiveLoanById error:", error);
-    return res.status(500).json({ message: error.message || "Server error" });
-  }
+  res.status(200).json({
+    message: "Active loan detail coming next",
+  });
 };
 
 module.exports = {
