@@ -134,15 +134,22 @@ const getAllMembers = async (req, res) => {
         created_at: "desc",
       },
       include: {
-        user_account: {
-          select: {
-            username: true,
-            is_active: true,
-            must_change_password: true,
-            last_login: true,
-          },
-        },
-      },
+  user_account: {
+    select: {
+      username: true,
+      is_active: true,
+      must_change_password: true,
+      last_login: true,
+    },
+  },
+  credential_logs: {
+    orderBy: {
+      created_at: "desc",
+    },
+    take: 1,
+  },
+},
+      
     });
 
     return res.status(200).json({
