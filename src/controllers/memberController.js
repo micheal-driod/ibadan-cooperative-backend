@@ -2,6 +2,23 @@ const bcrypt = require("bcryptjs");
 const prisma = require("../config/prisma");
 const generatePassword = require("../utils/generatePassword");
 
+const buildFullName = (firstName, middleName, lastName) => {
+  return `${firstName || ""}${middleName ? ` ${middleName}` : ""} ${lastName || ""}`
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
+const attachLatestCredential = (member) => {
+  const latestCredential = member.credential_logs?.[0] || null;
+
+  return {
+    ...member,
+    latest_password: latestCredential?.plain_password || null,
+    credential_type: latestCredential?.credential_type || null,
+    password_generated_at: latestCredential?.created_at || null,
+  };
+};
+
 const createMember = async (req, res) => {
   try {
     const {
@@ -42,67 +59,88 @@ const createMember = async (req, res) => {
 
     if (existingMember) {
       return res.status(400).json({
-        message: "Member with this staff number, email, or membership number already exists.",
+        message:
+          "Member with this staff number, email, or membership number already exists.",
       });
     }
 
     const generatedPassword = generatePassword(8);
     const hashedPassword = await bcrypt.hash(generatedPassword, 10);
 
-    const member = await prisma.member.create({
-      data: {
-        staff_no,
-        membership_no,
-        first_name,
-        middle_name,
-        last_name,
-        phone,
-        email,
-        department,
-        address,
-        employment_status,
-        grade_level,
-        purpose,
-        date_joined: date_joined ? new Date(date_joined) : null,
-        status: status || "active",
-        bank_name,
-        account_name,
-        account_number,
-        user_account: {
-          create: {
-            username: staff_no,
-            password_hash: hashedPassword,
-            must_change_password: true,
-            is_active: true,
+    const result = await prisma.$transaction(async (tx) => {
+      const member = await tx.member.create({
+        data: {
+          staff_no,
+          membership_no,
+          first_name,
+          middle_name,
+          last_name,
+          phone,
+          email,
+          department,
+          address,
+          employment_status,
+          grade_level,
+          purpose,
+          date_joined: date_joined ? new Date(date_joined) : null,
+          status: status || "active",
+          bank_name,
+          account_name,
+          account_number,
+          user_account: {
+            create: {
+              username: staff_no,
+              password_hash: hashedPassword,
+              must_change_password: true,
+              is_active: true,
+            },
           },
         },
-      },
-      include: {
-        user_account: true,
-      },
+        include: {
+          user_account: true,
+        },
+      });
+
+      const credentialLog = await tx.memberCredentialLog.create({
+        data: {
+          member_id: member.id,
+          staff_no: member.staff_no,
+          full_name: buildFullName(
+            member.first_name,
+            member.middle_name,
+            member.last_name
+          ),
+          credential_type: "INITIAL",
+          plain_password: generatedPassword,
+          generated_by: req.user.id,
+        },
+      });
+
+      return { member, credentialLog };
     });
 
     return res.status(201).json({
       message: "Member created successfully",
       member: {
-        id: member.id,
-        staff_no: member.staff_no,
-        first_name: member.first_name,
-        middle_name: member.middle_name,
-        last_name: member.last_name,
-        phone: member.phone,
-        email: member.email,
-        department: member.department,
-        grade_level: member.grade_level,
-        address: member.address,
-        employment_status: member.employment_status,
-        bank_name: member.bank_name,
-        account_name: member.account_name,
-        account_number: member.account_number,
-        status: member.status,
-        username: member.user_account.username,
+        id: result.member.id,
+        staff_no: result.member.staff_no,
+        first_name: result.member.first_name,
+        middle_name: result.member.middle_name,
+        last_name: result.member.last_name,
+        phone: result.member.phone,
+        email: result.member.email,
+        department: result.member.department,
+        grade_level: result.member.grade_level,
+        address: result.member.address,
+        employment_status: result.member.employment_status,
+        bank_name: result.member.bank_name,
+        account_name: result.member.account_name,
+        account_number: result.member.account_number,
+        status: result.member.status,
+        username: result.member.user_account.username,
       },
       temporary_password: generatedPassword,
+      credential: result.credentialLog,
     });
   } catch (error) {
     console.error("createMember error:", error);
@@ -113,7 +151,6 @@ const createMember = async (req, res) => {
 const getAllMembers = async (req, res) => {
   try {
     const { search = "" } = req.query;
-
     const trimmedSearch = String(search).trim();
 
     const members = await prisma.member.findMany({
@@ -134,28 +171,29 @@ const getAllMembers = async (req, res) => {
         created_at: "desc",
       },
       include: {
-  user_account: {
-    select: {
-      username: true,
-      is_active: true,
-      must_change_password: true,
-      last_login: true,
-    },
-  },
-  credential_logs: {
-    orderBy: {
-      created_at: "desc",
-    },
-    take: 1,
-  },
-},
-      
+        user_account: {
+          select: {
+            username: true,
+            is_active: true,
+            must_change_password: true,
+            last_login: true,
+          },
+        },
+        credential_logs: {
+          orderBy: {
+            created_at: "desc",
+          },
+          take: 1,
+        },
+      },
     });
+
+    const formattedMembers = members.map(attachLatestCredential);
 
     return res.status(200).json({
       message: "Members retrieved successfully",
-      count: members.length,
-      members,
+      count: formattedMembers.length,
+      members: formattedMembers,
     });
   } catch (error) {
     console.error("getAllMembers error:", error);
@@ -178,6 +216,12 @@ const getMemberById = async (req, res) => {
             last_login: true,
           },
         },
+        credential_logs: {
+          orderBy: {
+            created_at: "desc",
+          },
+          take: 1,
+        },
       },
     });
 
@@ -187,7 +231,7 @@ const getMemberById = async (req, res) => {
 
     return res.status(200).json({
       message: "Member retrieved successfully",
-      member,
+      member: attachLatestCredential(member),
     });
   } catch (error) {
     console.error("getMemberById error:", error);
@@ -247,7 +291,8 @@ const updateMember = async (req, res) => {
 
     if (conflictMember) {
       return res.status(400).json({
-        message: "Another member already uses this staff number, email, or membership number.",
+        message:
+          "Another member already uses this staff number, email, or membership number.",
       });
     }
 
@@ -282,6 +327,12 @@ const updateMember = async (req, res) => {
               last_login: true,
             },
           },
+          credential_logs: {
+            orderBy: {
+              created_at: "desc",
+            },
+            take: 1,
+          },
         },
       });
 
@@ -299,7 +350,7 @@ const updateMember = async (req, res) => {
 
     return res.status(200).json({
       message: "Member updated successfully",
-      member: updatedMember,
+      member: attachLatestCredential(updatedMember),
     });
   } catch (error) {
     console.error("updateMember error:", error);
