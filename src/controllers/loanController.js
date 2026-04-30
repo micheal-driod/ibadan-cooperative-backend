@@ -1,6 +1,7 @@
 const prisma = require("../config/prisma");
 
 // MEMBER: Apply for loan
+
 const applyForLoan = async (req, res) => {
   try {
     const memberId = req.user.id;
@@ -17,18 +18,14 @@ const applyForLoan = async (req, res) => {
 
     const finalLoanTypeId = Number(loan_type_id || loanTypeId);
     const finalAmount = Number(requested_amount || amount);
-    const rawDuration = duration_months;
-let finalDuration = rawDuration ? Number(rawDuration) : null;
+    let finalDuration = duration_months ? Number(duration_months) : null;
     const finalPurpose = loan_purpose || purpose;
 
     if (!finalLoanTypeId || !finalAmount || !finalPurpose) {
-  return res.status(400).json({
-    message: "loan_type_id, requested_amount and loan_purpose are required",
-  });
-}
-if (!finalDuration) {
-  finalDuration = Number(loanType.max_duration_months);
-}
+      return res.status(400).json({
+        message: "loan_type_id, requested_amount and loan_purpose are required",
+      });
+    }
 
     const loanType = await prisma.loanType.findUnique({
       where: { id: finalLoanTypeId },
@@ -40,24 +37,16 @@ if (!finalDuration) {
       });
     }
 
+    if (!finalDuration) {
+      finalDuration = Number(loanType.max_duration_months);
+    }
+
     if (
-      finalDuration < loanType.min_duration_months ||
-      finalDuration > loanType.max_duration_months
+      finalDuration < Number(loanType.min_duration_months) ||
+      finalDuration > Number(loanType.max_duration_months)
     ) {
       return res.status(400).json({
         message: `Invalid duration. ${loanType.name} must be between ${loanType.min_duration_months} and ${loanType.max_duration_months} months.`,
-      });
-    }
-
-    if (loanType.min_amount && finalAmount < Number(loanType.min_amount)) {
-      return res.status(400).json({
-        message: `Minimum amount is ${loanType.min_amount}`,
-      });
-    }
-
-    if (loanType.max_amount && finalAmount > Number(loanType.max_amount)) {
-      return res.status(400).json({
-        message: `Maximum amount is ${loanType.max_amount}`,
       });
     }
 
@@ -88,6 +77,7 @@ if (!finalDuration) {
     return res.status(201).json({
       message: "Loan application submitted successfully",
       loanApplication,
+      application: loanApplication,
     });
   } catch (error) {
     console.error("applyForLoan error:", error);
@@ -108,7 +98,12 @@ const getAllLoanApplications = async (req, res) => {
       orderBy: { created_at: "desc" },
     });
 
-    res.status(200).json(loans);
+    res.status(200).json({
+  message: "Loan applications retrieved successfully",
+  count: loans.length,
+  applications: loans,
+  loans,
+});
   } catch (error) {
     console.error("getAllLoanApplications error:", error);
     res.status(500).json({ message: error.message });
