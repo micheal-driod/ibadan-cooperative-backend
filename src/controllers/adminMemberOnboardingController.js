@@ -30,6 +30,14 @@ const generateTemporaryPassword = (staffNo) => {
   return `IBF${staffNo}${randomPart}`;
 };
 
+const buildFullName = (firstName, middleName, lastName) => {
+  return `${firstName || ""}${middleName ? ` ${middleName}` : ""} ${
+    lastName || ""
+  }`
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
 const addExistingMember = async (req, res) => {
   try {
     const {
@@ -103,8 +111,7 @@ const addExistingMember = async (req, res) => {
     const temporaryPassword = generateTemporaryPassword(trimmedStaffNo);
     const passwordHash = await bcrypt.hash(temporaryPassword, 10);
 
-    const fullName =
-      `${first_name}${middle_name ? " " + middle_name : ""} ${last_name}`.trim();
+    const fullName = buildFullName(first_name, middle_name, last_name);
 
     const result = await prisma.$transaction(async (tx) => {
       const member = await tx.member.create({
@@ -157,6 +164,96 @@ const addExistingMember = async (req, res) => {
     });
   } catch (error) {
     console.error("addExistingMember error:", error);
+    return res.status(500).json({
+      message: error.message || "Server error",
+    });
+  }
+};
+
+const regenerateMissingCredentials = async (req, res) => {
+  try {
+    const members = await prisma.member.findMany({
+      include: {
+        user_account: true,
+        credential_logs: {
+          take: 1,
+        },
+      },
+      orderBy: {
+        created_at: "desc",
+      },
+    });
+
+    const updated = [];
+    const skipped = [];
+
+    for (const member of members) {
+      if (member.credential_logs && member.credential_logs.length > 0) {
+        skipped.push({
+          member_id: member.id,
+          staff_no: member.staff_no,
+          reason: "Credential already exists",
+        });
+        continue;
+      }
+
+      if (!member.user_account) {
+        skipped.push({
+          member_id: member.id,
+          staff_no: member.staff_no,
+          reason: "User account not found",
+        });
+        continue;
+      }
+
+      const temporaryPassword = generateTemporaryPassword(member.staff_no);
+      const passwordHash = await bcrypt.hash(temporaryPassword, 10);
+      const fullName = buildFullName(
+        member.first_name,
+        member.middle_name,
+        member.last_name
+      );
+
+      const credentialLog = await prisma.$transaction(async (tx) => {
+        await tx.userAccount.update({
+          where: { member_id: member.id },
+          data: {
+            password_hash: passwordHash,
+            must_change_password: true,
+            is_active: true,
+          },
+        });
+
+        return tx.memberCredentialLog.create({
+          data: {
+            member_id: member.id,
+            staff_no: member.staff_no,
+            full_name: fullName,
+            credential_type: "RESET",
+            plain_password: temporaryPassword,
+            generated_by: req.user.id,
+          },
+        });
+      });
+
+      updated.push({
+        member_id: member.id,
+        staff_no: member.staff_no,
+        full_name: fullName,
+        temporary_password: credentialLog.plain_password,
+        credential_type: credentialLog.credential_type,
+      });
+    }
+
+    return res.status(200).json({
+      message: "Missing member credentials regenerated successfully",
+      count: updated.length,
+      updated,
+      skipped_count: skipped.length,
+      skipped,
+    });
+  } catch (error) {
+    console.error("regenerateMissingCredentials error:", error);
     return res.status(500).json({
       message: error.message || "Server error",
     });
@@ -284,6 +381,7 @@ const downloadCredentialLogsPdf = async (req, res) => {
 
 module.exports = {
   addExistingMember,
+  regenerateMissingCredentials,
   getCredentialLogs,
   downloadCredentialLogsPdf,
 };

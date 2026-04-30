@@ -1,0 +1,1138 @@
+adminMemberOnboardingController.js:const bcrypt = require("bcryptjs");
+const PDFDocument = require("pdfkit");
+const prisma = require("../config/prisma");
+
+const normalizeDepartment = (department) => {
+  if (!department) return null;
+
+  const value = department.trim().toUpperCase();
+
+  const map = {
+    ARFFS: "ARFFS",
+    AVSEC: "AVSEC",
+    COMMERCIAL: "COMMERCIAL",
+    STORE: "STORE",
+    ENVIRONMENT: "ENVIRONMENT",
+    ICT: "ICT",
+    ACCOUNTS: "ACCOUNTS",
+    AUDIT: "AUDIT",
+    CREDIT_CONTROL: "CREDIT_CONTROL",
+    "CREDIT CONTROL": "CREDIT_CONTROL",
+    SAFETY: "SAFETY",
+    OTHERS: "OTHERS",
+  };
+
+  return map[value] || null;
+};
+
+const generateTemporaryPassword = (staffNo) => {
+  const randomPart = Math.floor(1000 + Math.random() * 9000);
+  return `IBF${staffNo}${randomPart}`;
+};
+
+const addExistingMember = async (req, res) => {
+  try {
+    const {
+      staff_no,
+      membership_no,
+      first_name,
+      middle_name,
+      last_name,
+      phone,
+      email,
+      department,
+      address,
+      employment_status,
+      grade_level,
+      purpose,
+      date_joined,
+      status,
+    } = req.body;
+
+    if (!staff_no || !first_name || !last_name) {
+      return res.status(400).json({
+        message: "staff_no, first_name, and last_name are required.",
+      });
+    }
+
+    const trimmedStaffNo = staff_no.trim();
+
+    const existingMember = await prisma.member.findUnique({
+      where: { staff_no: trimmedStaffNo },
+    });
+
+    if (existingMember) {
+      return res.status(400).json({
+        message: "This staff number is already registered.",
+      });
+    }
+
+    if (email) {
+      const existingEmail = await prisma.member.findFirst({
+        where: { email: email.trim() },
+      });
+
+      if (existingEmail) {
+        return res.status(400).json({
+          message: "This email is already in use.",
+        });
+      }
+    }
+
+    if (membership_no) {
+      const existingMembership = await prisma.member.findFirst({
+        where: { membership_no: membership_no.trim() },
+      });
+
+      if (existingMembership) {
+        return res.status(400).json({
+          message: "This membership number is already in use.",
+        });
+      }
+    }
+
+    const normalizedDepartment = normalizeDepartment(department);
+
+    if (department && !normalizedDepartment) {
+      return res.status(400).json({
+        message:
+          "Invalid department. Use one of: ARFFS, AVSEC, COMMERCIAL, STORE, ENVIRONMENT, ICT, ACCOUNTS, AUDIT, CREDIT CONTROL, SAFETY, OTHERS.",
+      });
+    }
+
+    const temporaryPassword = generateTemporaryPassword(trimmedStaffNo);
+    const passwordHash = await bcrypt.hash(temporaryPassword, 10);
+
+    const fullName =
+      `${first_name}${middle_name ? " " + middle_name : ""} ${last_name}`.trim();
+
+    const result = await prisma.$transaction(async (tx) => {
+      const member = await tx.member.create({
+        data: {
+          staff_no: trimmedStaffNo,
+          membership_no: membership_no || null,
+          first_name,
+          middle_name: middle_name || null,
+          last_name,
+          phone: phone || null,
+          email: email || null,
+          department: normalizedDepartment,
+          address: address || null,
+          employment_status: employment_status || null,
+          grade_level: grade_level || null,
+          purpose: purpose || null,
+          date_joined: date_joined ? new Date(date_joined) : null,
+          status: status || "active",
+        },
+      });
+
+      await tx.userAccount.create({
+        data: {
+          member_id: member.id,
+          username: trimmedStaffNo,
+          password_hash: passwordHash,
+          must_change_password: true,
+          is_active: true,
+        },
+      });
+
+      const credentialLog = await tx.memberCredentialLog.create({
+        data: {
+          member_id: member.id,
+          staff_no: trimmedStaffNo,
+          full_name: fullName,
+          credential_type: "INITIAL",
+          plain_password: temporaryPassword,
+          generated_by: req.user.id,
+        },
+      });
+
+      return { member, credentialLog };
+    });
+
+    return res.status(201).json({
+      message: "Member onboarded successfully",
+      member: result.member,
+      credential: result.credentialLog,
+    });
+  } catch (error) {
+    console.error("addExistingMember error:", error);
+    return res.status(500).json({
+      message: error.message || "Server error",
+    });
+  }
+};
+
+const getCredentialLogs = async (req, res) => {
+  try {
+    const logs = await prisma.memberCredentialLog.findMany({
+      orderBy: {
+        created_at: "desc",
+      },
+      include: {
+        generator: {
+          select: {
+            id: true,
+            full_name: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    return res.status(200).json({
+      message: "Credential logs retrieved successfully",
+      count: logs.length,
+      credentials: logs,
+    });
+  } catch (error) {
+    console.error("getCredentialLogs error:", error);
+    return res.status(500).json({
+      message: error.message || "Server error",
+    });
+  }
+};
+
+const downloadCredentialLogsPdf = async (req, res) => {
+  try {
+    const { ids } = req.query;
+
+    let whereClause = {};
+
+    if (ids) {
+      const parsedIds = ids
+        .split(",")
+        .map((id) => Number(id.trim()))
+        .filter((id) => !Number.isNaN(id));
+
+      whereClause = {
+        id: {
+          in: parsedIds,
+        },
+      };
+    }
+
+    const logs = await prisma.memberCredentialLog.findMany({
+      where: whereClause,
+      orderBy: {
+        created_at: "desc",
+      },
+    });
+
+    if (!logs.length) {
+      return res.status(404).json({
+        message: "No credential logs found for PDF export.",
+      });
+    }
+
+    const doc = new PDFDocument({ margin: 40, size: "A4" });
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="member_credentials.pdf"'
+    );
+
+    doc.pipe(res);
+
+    doc.fontSize(18).text("IBARFFS COOPs Member Credentials", {
+      align: "center",
+    });
+
+    doc.moveDown(0.5);
+    doc.fontSize(10).text(`Generated on: ${new Date().toLocaleString()}`, {
+      align: "center",
+    });
+
+    doc.moveDown(1.5);
+
+    let y = doc.y;
+
+    doc.fontSize(11).text("S/N", 40, y);
+    doc.text("Full Name", 80, y);
+    doc.text("Staff No", 270, y);
+    doc.text("Password", 360, y);
+    doc.text("Type", 480, y);
+
+    doc.moveTo(40, y + 15).lineTo(555, y + 15).stroke();
+
+    y += 25;
+
+    logs.forEach((item, index) => {
+      if (y > 760) {
+        doc.addPage();
+        y = 50;
+      }
+
+      doc.fontSize(10).text(String(index + 1), 40, y);
+      doc.text(item.full_name, 80, y, { width: 170 });
+      doc.text(item.staff_no, 270, y, { width: 70 });
+      doc.text(item.plain_password, 360, y, { width: 100 });
+      doc.text(item.credential_type, 480, y, { width: 60 });
+
+      y += 35;
+    });
+
+    doc.end();
+  } catch (error) {
+    console.error("downloadCredentialLogsPdf error:", error);
+    return res.status(500).json({
+      message: error.message || "Server error",
+    });
+  }
+};
+
+module.exports = {
+  addExistingMember,
+  getCredentialLogs,
+  downloadCredentialLogsPdf,
+};
+
+
+
+passwordRequestAdminController.js:const bcrypt = require("bcryptjs");
+const prisma = require("../config/prisma");
+
+const buildFullName = (firstName, middleName, lastName) => {
+  return `${firstName || ""}${middleName ? ` ${middleName}` : ""} ${lastName || ""}`
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
+const getAllPasswordChangeRequests = async (req, res) => {
+  try {
+    const requests = await prisma.passwordChangeRequest.findMany({
+      orderBy: {
+        created_at: "desc",
+      },
+      include: {
+        member: {
+          select: {
+            id: true,
+            staff_no: true,
+            first_name: true,
+            middle_name: true,
+            last_name: true,
+            department: true,
+            grade_level: true,
+          },
+        },
+        reviewer: {
+          select: {
+            id: true,
+            full_name: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    return res.status(200).json({
+      message: "Password change requests retrieved successfully",
+      count: requests.length,
+      requests,
+    });
+  } catch (error) {
+    console.error("getAllPasswordChangeRequests error:", error);
+    return res.status(500).json({
+      message: error.message || "Server error",
+    });
+  }
+};
+
+const approvePasswordChangeRequest = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { admin_note } = req.body;
+
+    const request = await prisma.passwordChangeRequest.findUnique({
+      where: { id: Number(id) },
+      include: {
+        member: {
+          include: {
+            user_account: true,
+          },
+        },
+      },
+    });
+
+    if (!request) {
+      return res.status(404).json({
+        message: "Password change request not found",
+      });
+    }
+
+    if (request.status !== "pending") {
+      return res.status(400).json({
+        message: "Only pending requests can be approved",
+      });
+    }
+
+    const finalPassword = request.new_password_plain;
+
+    if (!finalPassword || !String(finalPassword).trim()) {
+      return res.status(400).json({
+        message:
+          "Plain password not found on this request. Ensure member submit flow stores new_password_plain.",
+      });
+    }
+
+    const cleanPassword = String(finalPassword).trim();
+    const newPasswordHash = await bcrypt.hash(cleanPassword, 10);
+
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.userAccount.update({
+        where: { member_id: request.member_id },
+        data: {
+          password_hash: newPasswordHash,
+          must_change_password: false,
+        },
+      });
+
+      await tx.memberCredentialLog.create({
+        data: {
+          member_id: request.member.id,
+          staff_no: request.member.staff_no,
+          full_name: buildFullName(
+            request.member.first_name,
+            request.member.middle_name,
+            request.member.last_name
+          ),
+          credential_type: "RESET",
+          plain_password: cleanPassword,
+          generated_by: req.user.id,
+        },
+      });
+
+      const updatedRequest = await tx.passwordChangeRequest.update({
+        where: { id: request.id },
+        data: {
+          status: "approved",
+          admin_note: admin_note || "Password change approved",
+          reviewed_by: req.user.id,
+          reviewed_at: new Date(),
+        },
+      });
+
+      return updatedRequest;
+    });
+
+    return res.status(200).json({
+      message: "Password change request approved successfully",
+      credential: {
+        staff_no: request.member.staff_no,
+        full_name: buildFullName(
+          request.member.first_name,
+          request.member.middle_name,
+          request.member.last_name
+        ),
+        new_password: cleanPassword,
+      },
+      request: result,
+    });
+  } catch (error) {
+    console.error("approvePasswordChangeRequest error:", error);
+    return res.status(500).json({
+      message: error.message || "Server error",
+    });
+  }
+};
+
+const rejectPasswordChangeRequest = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { admin_note } = req.body;
+
+    const request = await prisma.passwordChangeRequest.findUnique({
+      where: { id: Number(id) },
+    });
+
+    if (!request) {
+      return res.status(404).json({
+        message: "Password change request not found",
+      });
+    }
+
+    if (request.status !== "pending") {
+      return res.status(400).json({
+        message: "Only pending requests can be rejected",
+      });
+    }
+
+    const updatedRequest = await prisma.passwordChangeRequest.update({
+      where: { id: Number(id) },
+      data: {
+        status: "rejected",
+        admin_note: admin_note || "Password change request rejected",
+        reviewed_by: req.user.id,
+        reviewed_at: new Date(),
+      },
+    });
+
+    return res.status(200).json({
+      message: "Password change request rejected successfully",
+      request: updatedRequest,
+    });
+  } catch (error) {
+    console.error("rejectPasswordChangeRequest error:", error);
+    return res.status(500).json({
+      message: error.message || "Server error",
+    });
+  }
+};
+
+module.exports = {
+  getAllPasswordChangeRequests,
+  approvePasswordChangeRequest,
+  rejectPasswordChangeRequest,
+};
+
+
+
+memberRegistrationControllers.js: const bcrypt = require("bcryptjs");
+const prisma = require("../config/prisma");
+
+const generateTemporaryPassword = (staffNo) => {
+  const randomPart = Math.floor(1000 + Math.random() * 9000);
+  return `IBF${staffNo}${randomPart}`;
+};
+
+const normalizeDepartment = (department) => {
+  if (!department) return null;
+
+  const value = department.trim().toUpperCase();
+
+  const map = {
+    ARFFS: "ARFFS",
+    AVSEC: "AVSEC",
+    COMMERCIAL: "COMMERCIAL",
+    STORE: "STORE",
+    ENVIRONMENT: "ENVIRONMENT",
+    ICT: "ICT",
+    ACCOUNTS: "ACCOUNTS",
+    AUDIT: "AUDIT",
+    CREDIT_CONTROL: "CREDIT_CONTROL",
+    "CREDIT CONTROL": "CREDIT_CONTROL",
+    SAFETY: "SAFETY",
+    OTHERS: "OTHERS",
+  };
+
+  return map[value] || null;
+};
+
+const buildFullName = (firstName, middleName, lastName) => {
+  return `${firstName || ""}${middleName ? ` ${middleName}` : ""} ${lastName || ""}`
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
+const submitRegistrationRequest = async (req, res) => {
+  try {
+    const {
+      staff_no,
+      membership_no,
+      first_name,
+      middle_name,
+      last_name,
+      phone,
+      email,
+      department,
+      address,
+      employment_status,
+      grade_level,
+      purpose,
+      date_joined,
+    } = req.body;
+
+    if (!staff_no || !first_name || !last_name) {
+      return res.status(400).json({
+        message: "staff_no, first_name, and last_name are required.",
+      });
+    }
+
+    const trimmedStaffNo = staff_no.trim();
+
+    const existingMember = await prisma.member.findUnique({
+      where: { staff_no: trimmedStaffNo },
+    });
+
+    if (existingMember) {
+      return res.status(400).json({
+        message: "This staff number is already registered.",
+      });
+    }
+
+    const existingRequest = await prisma.memberRegistrationRequest.findUnique({
+      where: { staff_no: trimmedStaffNo },
+    });
+
+    if (existingRequest && existingRequest.status === "pending") {
+      return res.status(400).json({
+        message: "A registration request for this staff number is already pending.",
+      });
+    }
+
+    if (existingRequest && existingRequest.status === "rejected") {
+      await prisma.memberRegistrationRequest.delete({
+        where: { id: existingRequest.id },
+      });
+    }
+
+    const normalizedDepartment = normalizeDepartment(department);
+
+    if (department && !normalizedDepartment) {
+      return res.status(400).json({
+        message:
+          "Invalid department. Use one of: ARFFS, AVSEC, COMMERCIAL, STORE, ENVIRONMENT, ICT, ACCOUNTS, AUDIT, CREDIT CONTROL, SAFETY, OTHERS.",
+      });
+    }
+
+    const request = await prisma.memberRegistrationRequest.create({
+      data: {
+        staff_no: trimmedStaffNo,
+        membership_no: membership_no || null,
+        first_name,
+        middle_name: middle_name || null,
+        last_name,
+        phone: phone || null,
+        email: email || null,
+        department: normalizedDepartment,
+        address: address || null,
+        employment_status: employment_status || null,
+        grade_level: grade_level || null,
+        purpose: purpose || null,
+        date_joined: date_joined ? new Date(date_joined) : null,
+      },
+    });
+
+    return res.status(201).json({
+      message: "Registration request submitted successfully. Await admin approval.",
+      request,
+    });
+  } catch (error) {
+    console.error("submitRegistrationRequest error:", error);
+    return res.status(500).json({
+      message: error.message || "Server error",
+      detail: error.code || null,
+    });
+  }
+};
+
+const getAllRegistrationRequests = async (req, res) => {
+  try {
+    const requests = await prisma.memberRegistrationRequest.findMany({
+      orderBy: { created_at: "desc" },
+      include: {
+        reviewer: {
+          select: {
+            id: true,
+            full_name: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    return res.status(200).json({
+      message: "Registration requests retrieved successfully",
+      count: requests.length,
+      requests,
+    });
+  } catch (error) {
+    console.error("getAllRegistrationRequests error:", error);
+    return res.status(500).json({
+      message: error.message || "Server error",
+      detail: error.code || null,
+    });
+  }
+};
+
+const approveRegistrationRequest = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { admin_note } = req.body;
+
+    const request = await prisma.memberRegistrationRequest.findUnique({
+      where: { id: Number(id) },
+    });
+
+    if (!request) {
+      return res.status(404).json({ message: "Registration request not found" });
+    }
+
+    if (request.status !== "pending") {
+      return res.status(400).json({ message: "Only pending requests can be approved" });
+    }
+
+    const existingMember = await prisma.member.findUnique({
+      where: { staff_no: request.staff_no },
+    });
+
+    if (existingMember) {
+      return res.status(400).json({
+        message: "A member with this staff number already exists.",
+      });
+    }
+
+    if (request.email) {
+      const existingEmailMember = await prisma.member.findFirst({
+        where: { email: request.email },
+      });
+
+      if (existingEmailMember) {
+        return res.status(400).json({
+          message: "A member with this email already exists.",
+        });
+      }
+    }
+
+    if (request.membership_no) {
+      const existingMembership = await prisma.member.findFirst({
+        where: { membership_no: request.membership_no },
+      });
+
+      if (existingMembership) {
+        return res.status(400).json({
+          message: "A member with this membership number already exists.",
+        });
+      }
+    }
+
+    const tempPassword = generateTemporaryPassword(request.staff_no);
+    const passwordHash = await bcrypt.hash(tempPassword, 10);
+
+    const result = await prisma.$transaction(async (tx) => {
+      const member = await tx.member.create({
+        data: {
+          staff_no: request.staff_no,
+          membership_no: request.membership_no,
+          first_name: request.first_name,
+          middle_name: request.middle_name,
+          last_name: request.last_name,
+          phone: request.phone,
+          email: request.email,
+          department: request.department,
+          address: request.address,
+          employment_status: request.employment_status,
+          grade_level: request.grade_level,
+          purpose: request.purpose,
+          date_joined: request.date_joined,
+          status: "active",
+        },
+      });
+
+      await tx.userAccount.create({
+        data: {
+          member_id: member.id,
+          username: request.staff_no,
+          password_hash: passwordHash,
+          must_change_password: true,
+          is_active: true,
+        },
+      });
+
+      await tx.memberCredentialLog.create({
+        data: {
+          member_id: member.id,
+          staff_no: request.staff_no,
+          full_name: buildFullName(request.first_name, request.middle_name, request.last_name),
+          credential_type: "INITIAL",
+          plain_password: tempPassword,
+          generated_by: req.user.id,
+        },
+      });
+
+      const updatedRequest = await tx.memberRegistrationRequest.update({
+        where: { id: request.id },
+        data: {
+          status: "approved",
+          admin_note: admin_note || "Registration approved",
+          reviewed_by: req.user.id,
+          reviewed_at: new Date(),
+        },
+      });
+
+      return { member, updatedRequest };
+    });
+
+    return res.status(200).json({
+      message: "Registration request approved successfully",
+      credential: {
+        staff_no: result.member.staff_no,
+        full_name: buildFullName(
+          result.member.first_name,
+          result.member.middle_name,
+          result.member.last_name
+        ),
+        temporary_password: tempPassword,
+      },
+      member: result.member,
+      request: result.updatedRequest,
+    });
+  } catch (error) {
+    console.error("approveRegistrationRequest error:", error);
+    return res.status(500).json({
+      message: error.message || "Server error",
+      detail: error.code || null,
+    });
+  }
+};
+
+const rejectRegistrationRequest = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { admin_note } = req.body;
+
+    const request = await prisma.memberRegistrationRequest.findUnique({
+      where: { id: Number(id) },
+    });
+
+    if (!request) {
+      return res.status(404).json({ message: "Registration request not found" });
+    }
+
+    if (request.status !== "pending") {
+      return res.status(400).json({ message: "Only pending requests can be rejected" });
+    }
+
+    const updatedRequest = await prisma.memberRegistrationRequest.update({
+      where: { id: request.id },
+      data: {
+        status: "rejected",
+        admin_note: admin_note || "Registration rejected",
+        reviewed_by: req.user.id,
+        reviewed_at: new Date(),
+      },
+    });
+
+    return res.status(200).json({
+      message: "Registration request rejected successfully",
+      request: updatedRequest,
+    });
+  } catch (error) {
+    console.error("rejectRegistrationRequest error:", error);
+    return res.status(500).json({
+      message: error.message || "Server error",
+      detail: error.code || null,
+    });
+  }
+};
+
+module.exports = {
+  submitRegistrationRequest,
+  getAllRegistrationRequests,
+  approveRegistrationRequest,
+  rejectRegistrationRequest,
+};
+
+
+
+memberController.js: const bcrypt = require("bcryptjs");
+const prisma = require("../config/prisma");
+const generatePassword = require("../utils/generatePassword");
+
+const createMember = async (req, res) => {
+  try {
+    const {
+      staff_no,
+      membership_no,
+      first_name,
+      middle_name,
+      last_name,
+      phone,
+      email,
+      department,
+      address,
+      employment_status,
+      grade_level,
+      purpose,
+      date_joined,
+      status,
+      bank_name,
+      account_name,
+      account_number,
+    } = req.body;
+
+    if (!staff_no || !first_name || !last_name) {
+      return res.status(400).json({
+        message: "staff_no, first_name, and last_name are required.",
+      });
+    }
+
+    const existingMember = await prisma.member.findFirst({
+      where: {
+        OR: [
+          { staff_no },
+          ...(email ? [{ email }] : []),
+          ...(membership_no ? [{ membership_no }] : []),
+        ],
+      },
+    });
+
+    if (existingMember) {
+      return res.status(400).json({
+        message: "Member with this staff number, email, or membership number already exists.",
+      });
+    }
+
+    const generatedPassword = generatePassword(8);
+    const hashedPassword = await bcrypt.hash(generatedPassword, 10);
+
+    const member = await prisma.member.create({
+      data: {
+        staff_no,
+        membership_no,
+        first_name,
+        middle_name,
+        last_name,
+        phone,
+        email,
+        department,
+        address,
+        employment_status,
+        grade_level,
+        purpose,
+        date_joined: date_joined ? new Date(date_joined) : null,
+        status: status || "active",
+        bank_name,
+        account_name,
+        account_number,
+        user_account: {
+          create: {
+            username: staff_no,
+            password_hash: hashedPassword,
+            must_change_password: true,
+            is_active: true,
+          },
+        },
+      },
+      include: {
+        user_account: true,
+      },
+    });
+
+    return res.status(201).json({
+      message: "Member created successfully",
+      member: {
+        id: member.id,
+        staff_no: member.staff_no,
+        first_name: member.first_name,
+        middle_name: member.middle_name,
+        last_name: member.last_name,
+        phone: member.phone,
+        email: member.email,
+        department: member.department,
+        grade_level: member.grade_level,
+        address: member.address,
+        employment_status: member.employment_status,
+        bank_name: member.bank_name,
+        account_name: member.account_name,
+        account_number: member.account_number,
+        status: member.status,
+        username: member.user_account.username,
+      },
+      temporary_password: generatedPassword,
+    });
+  } catch (error) {
+    console.error("createMember error:", error);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+const getAllMembers = async (req, res) => {
+  try {
+    const { search = "" } = req.query;
+
+    const trimmedSearch = String(search).trim();
+
+    const members = await prisma.member.findMany({
+      where: trimmedSearch
+        ? {
+            OR: [
+              { staff_no: { contains: trimmedSearch, mode: "insensitive" } },
+              { membership_no: { contains: trimmedSearch, mode: "insensitive" } },
+              { first_name: { contains: trimmedSearch, mode: "insensitive" } },
+              { middle_name: { contains: trimmedSearch, mode: "insensitive" } },
+              { last_name: { contains: trimmedSearch, mode: "insensitive" } },
+              { phone: { contains: trimmedSearch, mode: "insensitive" } },
+              { email: { contains: trimmedSearch, mode: "insensitive" } },
+            ],
+          }
+        : undefined,
+      orderBy: {
+        created_at: "desc",
+      },
+      include: {
+        user_account: {
+          select: {
+            username: true,
+            is_active: true,
+            must_change_password: true,
+            last_login: true,
+          },
+        },
+      },
+    });
+
+    return res.status(200).json({
+      message: "Members retrieved successfully",
+      count: members.length,
+      members,
+    });
+  } catch (error) {
+    console.error("getAllMembers error:", error);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+const getMemberById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const member = await prisma.member.findUnique({
+      where: { id: Number(id) },
+      include: {
+        user_account: {
+          select: {
+            username: true,
+            is_active: true,
+            must_change_password: true,
+            last_login: true,
+          },
+        },
+      },
+    });
+
+    if (!member) {
+      return res.status(404).json({ message: "Member not found" });
+    }
+
+    return res.status(200).json({
+      message: "Member retrieved successfully",
+      member,
+    });
+  } catch (error) {
+    console.error("getMemberById error:", error);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+const updateMember = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const memberId = Number(id);
+
+    const existingMember = await prisma.member.findUnique({
+      where: { id: memberId },
+    });
+
+    if (!existingMember) {
+      return res.status(404).json({ message: "Member not found" });
+    }
+
+    const {
+      staff_no,
+      membership_no,
+      first_name,
+      middle_name,
+      last_name,
+      phone,
+      email,
+      department,
+      address,
+      employment_status,
+      grade_level,
+      purpose,
+      date_joined,
+      status,
+      bank_name,
+      account_name,
+      account_number,
+    } = req.body;
+
+    if (!staff_no || !first_name || !last_name) {
+      return res.status(400).json({
+        message: "staff_no, first_name, and last_name are required.",
+      });
+    }
+
+    const conflictMember = await prisma.member.findFirst({
+      where: {
+        id: { not: memberId },
+        OR: [
+          { staff_no },
+          ...(email ? [{ email }] : []),
+          ...(membership_no ? [{ membership_no }] : []),
+        ],
+      },
+    });
+
+    if (conflictMember) {
+      return res.status(400).json({
+        message: "Another member already uses this staff number, email, or membership number.",
+      });
+    }
+
+    const updatedMember = await prisma.$transaction(async (tx) => {
+      const member = await tx.member.update({
+        where: { id: memberId },
+        data: {
+          staff_no,
+          membership_no: membership_no || null,
+          first_name,
+          middle_name: middle_name || null,
+          last_name,
+          phone: phone || null,
+          email: email || null,
+          department: department || null,
+          address: address || null,
+          employment_status: employment_status || null,
+          grade_level: grade_level || null,
+          purpose: purpose || null,
+          date_joined: date_joined ? new Date(date_joined) : null,
+          status: status || "active",
+          bank_name: bank_name || null,
+          account_name: account_name || null,
+          account_number: account_number || null,
+        },
+        include: {
+          user_account: {
+            select: {
+              username: true,
+              is_active: true,
+              must_change_password: true,
+              last_login: true,
+            },
+          },
+        },
+      });
+
+      if (existingMember.staff_no !== staff_no) {
+        await tx.userAccount.update({
+          where: { member_id: memberId },
+          data: {
+            username: staff_no,
+          },
+        });
+      }
+
+      return member;
+    });
+
+    return res.status(200).json({
+      message: "Member updated successfully",
+      member: updatedMember,
+    });
+  } catch (error) {
+    console.error("updateMember error:", error);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+module.exports = {
+  createMember,
+  getAllMembers,
+  getMemberById,
+  updateMember,
+};
+

@@ -3,6 +3,7 @@ const router = express.Router();
 
 const {
   addExistingMember,
+  regenerateMissingCredentials,
   getCredentialLogs,
   downloadCredentialLogsPdf,
 } = require("../controllers/adminMemberOnboardingController");
@@ -14,6 +15,13 @@ router.post(
   protect,
   authorize("admin", "ict_officer"),
   addExistingMember
+);
+
+router.post(
+  "/regenerate-missing-credentials",
+  protect,
+  authorize("admin", "ict_officer"),
+  regenerateMissingCredentials
 );
 
 router.get(
