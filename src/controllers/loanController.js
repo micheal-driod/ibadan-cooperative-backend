@@ -17,15 +17,18 @@ const applyForLoan = async (req, res) => {
 
     const finalLoanTypeId = Number(loan_type_id || loanTypeId);
     const finalAmount = Number(requested_amount || amount);
-    const finalDuration = Number(duration_months);
+    const rawDuration = duration_months;
+let finalDuration = rawDuration ? Number(rawDuration) : null;
     const finalPurpose = loan_purpose || purpose;
 
-    if (!finalLoanTypeId || !finalAmount || !finalDuration || !finalPurpose) {
-      return res.status(400).json({
-        message:
-          "loan_type_id, requested_amount, duration_months and loan_purpose are required",
-      });
-    }
+    if (!finalLoanTypeId || !finalAmount || !finalPurpose) {
+  return res.status(400).json({
+    message: "loan_type_id, requested_amount and loan_purpose are required",
+  });
+}
+if (!finalDuration) {
+  finalDuration = Number(loanType.max_duration_months);
+}
 
     const loanType = await prisma.loanType.findUnique({
       where: { id: finalLoanTypeId },
@@ -74,7 +77,7 @@ const applyForLoan = async (req, res) => {
         total_repayment: totalRepayment,
         monthly_deduction: monthlyDeduction,
         loan_purpose: finalPurpose,
-        status: "pending",
+        status: "submitted",
       },
       include: {
         loan_type: true,
