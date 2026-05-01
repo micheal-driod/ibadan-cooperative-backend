@@ -390,11 +390,17 @@ model MonthlyPostingRow {
   special_savings_credit        Decimal  @default(0) @db.Decimal(18, 2)
 
   long_term_loan_taken          Decimal  @default(0) @db.Decimal(18, 2)
+  long_term_interest_credit      Decimal  @default(0) @db.Decimal(18, 2)
   long_term_loan_repayment      Decimal  @default(0) @db.Decimal(18, 2)
+  long_term_interest_debit       Decimal  @default(0) @db.Decimal(18, 2)
   soft_loan_taken               Decimal  @default(0) @db.Decimal(18, 2)
+  soft_interest_credit           Decimal  @default(0) @db.Decimal(18, 2)
   soft_loan_repayment           Decimal  @default(0) @db.Decimal(18, 2)
+  soft_interest_debit            Decimal  @default(0) @db.Decimal(18, 2)
   commodity_loan_taken          Decimal  @default(0) @db.Decimal(18, 2)
+  commodity_interest_credit      Decimal  @default(0) @db.Decimal(18, 2)
   commodity_loan_repayment      Decimal  @default(0) @db.Decimal(18, 2)
+  commodity_interest_debit       Decimal  @default(0) @db.Decimal(18, 2)
 
   charges                       Decimal  @default(0) @db.Decimal(18, 2)
   charges_label                 String?
