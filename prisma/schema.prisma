@@ -22,6 +22,8 @@ model StaffUser {
   phone         String?
   role_id       Int
   is_active     Boolean  @default(true)
+  monthly_posting_batches MonthlyPostingBatch[]
+  edited_monthly_postings MonthlyPostingRow[] @relation("MonthlyPostingEditor")
   created_at    DateTime @default(now())
   updated_at    DateTime @updatedAt
 
@@ -66,7 +68,9 @@ model Member {
   ledger_entries           MemberLedger[]
   password_change_requests PasswordChangeRequest[]
   credential_logs          MemberCredentialLog[]
+  monthly_posting_rows MonthlyPostingRow[]
 }
+
 
 model MemberRegistrationRequest {
   id                Int                             @id @default(autoincrement())
@@ -352,6 +356,68 @@ enum LoanBucketType {
   LONG_TERM
   SOFT
   COMMODITY
+}
+
+
+model MonthlyPostingBatch {
+  id            Int      @id @default(autoincrement())
+  batch_code    String   @unique
+  uploaded_by   Int
+  total_rows    Int      @default(0)
+  imported_rows Int      @default(0)
+  failed_rows   Int      @default(0)
+  status        String   @default("imported")
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  uploader StaffUser           @relation(fields: [uploaded_by], references: [id])
+  rows     MonthlyPostingRow[]
+
+  @@index([uploaded_by])
+}
+
+model MonthlyPostingRow {
+  id                            Int      @id @default(autoincrement())
+  batch_id                      Int
+  member_id                     Int
+  staff_no                      String
+  posting_date                  DateTime
+
+  shares_credit                 Decimal  @default(0) @db.Decimal(18, 2)
+  savings_debit                 Decimal  @default(0) @db.Decimal(18, 2)
+  savings_credit                Decimal  @default(0) @db.Decimal(18, 2)
+  special_savings_debit         Decimal  @default(0) @db.Decimal(18, 2)
+  special_savings_credit        Decimal  @default(0) @db.Decimal(18, 2)
+
+  long_term_loan_taken          Decimal  @default(0) @db.Decimal(18, 2)
+  long_term_loan_repayment      Decimal  @default(0) @db.Decimal(18, 2)
+  soft_loan_taken               Decimal  @default(0) @db.Decimal(18, 2)
+  soft_loan_repayment           Decimal  @default(0) @db.Decimal(18, 2)
+  commodity_loan_taken          Decimal  @default(0) @db.Decimal(18, 2)
+  commodity_loan_repayment      Decimal  @default(0) @db.Decimal(18, 2)
+
+  charges                       Decimal  @default(0) @db.Decimal(18, 2)
+  charges_label                 String?
+  fines                         Decimal  @default(0) @db.Decimal(18, 2)
+  fines_label                   String?
+  adjustment                    Decimal  @default(0) @db.Decimal(18, 2)
+  description                   String?
+
+  entries_posted                String[]
+  status                        String   @default("imported")
+  edited_by                     Int?
+  edited_at                     DateTime?
+
+  created_at                    DateTime @default(now())
+  updated_at                    DateTime @updatedAt
+
+  batch  MonthlyPostingBatch @relation(fields: [batch_id], references: [id], onDelete: Cascade)
+  member Member              @relation(fields: [member_id], references: [id], onDelete: Cascade)
+  editor StaffUser?          @relation("MonthlyPostingEditor", fields: [edited_by], references: [id])
+
+  @@index([batch_id])
+  @@index([member_id])
+  @@index([staff_no])
 }
 
 model MemberLoanBalance {
