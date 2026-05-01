@@ -82,13 +82,19 @@ const buildPostingRow = async (row, rowNumber) => {
   const special_savings_credit = numberValue(row.special_savings_credit);
 
   const long_term_loan_taken = numberValue(row.long_term_loan_taken);
+  const long_term_interest_credit = numberValue(row.long_term_interest_credit);
   const long_term_loan_repayment = numberValue(row.long_term_loan_repayment);
+  const long_term_interest_debit = numberValue(row.long_term_interest_debit);
 
   const soft_loan_taken = numberValue(row.soft_loan_taken);
+  const soft_interest_credit = numberValue(row.soft_interest_credit);
   const soft_loan_repayment = numberValue(row.soft_loan_repayment);
+  const soft_interest_debit = numberValue(row.soft_interest_debit);
 
   const commodity_loan_taken = numberValue(row.commodity_loan_taken);
+  const commodity_interest_credit = numberValue(row.commodity_interest_credit);
   const commodity_loan_repayment = numberValue(row.commodity_loan_repayment);
+  const commodity_interest_debit = numberValue(row.commodity_interest_debit);
 
   const charges = numberValue(row.charges);
   const charges_label = normalizeValue(row.charges_label);
@@ -116,12 +122,22 @@ const buildPostingRow = async (row, rowNumber) => {
     ["savings_credit", savings_credit],
     ["special_savings_debit", special_savings_debit],
     ["special_savings_credit", special_savings_credit],
+
     ["long_term_loan_taken", long_term_loan_taken],
+    ["long_term_interest_credit", long_term_interest_credit],
     ["long_term_loan_repayment", long_term_loan_repayment],
+    ["long_term_interest_debit", long_term_interest_debit],
+
     ["soft_loan_taken", soft_loan_taken],
+    ["soft_interest_credit", soft_interest_credit],
     ["soft_loan_repayment", soft_loan_repayment],
+    ["soft_interest_debit", soft_interest_debit],
+
     ["commodity_loan_taken", commodity_loan_taken],
+    ["commodity_interest_credit", commodity_interest_credit],
     ["commodity_loan_repayment", commodity_loan_repayment],
+    ["commodity_interest_debit", commodity_interest_debit],
+
     ["charges", charges],
     ["fines", fines],
     ["adjustment", adjustment],
@@ -157,17 +173,28 @@ const buildPostingRow = async (row, rowNumber) => {
     staff_no,
     posting_date,
     posting_date_obj,
+
     shares_credit,
     savings_debit,
     savings_credit,
     special_savings_debit,
     special_savings_credit,
+
     long_term_loan_taken,
+    long_term_interest_credit,
     long_term_loan_repayment,
+    long_term_interest_debit,
+
     soft_loan_taken,
+    soft_interest_credit,
     soft_loan_repayment,
+    soft_interest_debit,
+
     commodity_loan_taken,
+    commodity_interest_credit,
     commodity_loan_repayment,
+    commodity_interest_debit,
+
     charges,
     charges_label,
     fines,
@@ -213,17 +240,28 @@ const previewBulkMonthlyPosting = async (req, res) => {
         row_number: r.row_number,
         staff_no: r.staff_no,
         posting_date: r.posting_date,
+
         shares_credit: r.shares_credit,
         savings_debit: r.savings_debit,
         savings_credit: r.savings_credit,
         special_savings_debit: r.special_savings_debit,
         special_savings_credit: r.special_savings_credit,
+
         long_term_loan_taken: r.long_term_loan_taken,
+        long_term_interest_credit: r.long_term_interest_credit,
         long_term_loan_repayment: r.long_term_loan_repayment,
+        long_term_interest_debit: r.long_term_interest_debit,
+
         soft_loan_taken: r.soft_loan_taken,
+        soft_interest_credit: r.soft_interest_credit,
         soft_loan_repayment: r.soft_loan_repayment,
+        soft_interest_debit: r.soft_interest_debit,
+
         commodity_loan_taken: r.commodity_loan_taken,
+        commodity_interest_credit: r.commodity_interest_credit,
         commodity_loan_repayment: r.commodity_loan_repayment,
+        commodity_interest_debit: r.commodity_interest_debit,
+
         charges: r.charges,
         fines: r.fines,
         adjustment: r.adjustment,
@@ -301,6 +339,61 @@ const createLedger = async ({
       month,
       year,
       description,
+    },
+  });
+};
+
+const updateLoanBalance = async ({
+  tx,
+  memberId,
+  bucket,
+  principalDelta = 0,
+  interestDelta = 0,
+  totalDelta = 0,
+  staffUserId,
+}) => {
+  const current = await tx.memberLoanBalance.findUnique({
+    where: {
+      member_id_loan_bucket_type: {
+        member_id: memberId,
+        loan_bucket_type: bucket,
+      },
+    },
+  });
+
+  if (principalDelta < 0 && Number(current.principal_balance || 0) < Math.abs(principalDelta)) {
+    throw new Error(`${bucket} principal repayment exceeds current principal balance`);
+  }
+
+  if (interestDelta < 0 && Number(current.interest_balance || 0) < Math.abs(interestDelta)) {
+    throw new Error(`${bucket} interest debit exceeds current interest balance`);
+  }
+
+  if (totalDelta < 0 && Number(current.total_balance || 0) < Math.abs(totalDelta)) {
+    throw new Error(`${bucket} deduction exceeds current total balance`);
+  }
+
+  await tx.memberLoanBalance.update({
+    where: {
+      member_id_loan_bucket_type: {
+        member_id: memberId,
+        loan_bucket_type: bucket,
+      },
+    },
+    data: {
+      principal_balance:
+        principalDelta >= 0
+          ? { increment: principalDelta }
+          : { decrement: Math.abs(principalDelta) },
+      interest_balance:
+        interestDelta >= 0
+          ? { increment: interestDelta }
+          : { decrement: Math.abs(interestDelta) },
+      total_balance:
+        totalDelta >= 0
+          ? { increment: totalDelta }
+          : { decrement: Math.abs(totalDelta) },
+      last_updated_by: staffUserId,
     },
   });
 };
@@ -433,223 +526,133 @@ const applySinglePosting = async (tx, row, staffUserId) => {
     entries.push("SPECIAL_SAVINGS_DEBIT");
   }
 
-  if (row.long_term_loan_taken > 0) {
-    await createLedger({
-      tx,
-      memberId,
-      staffUserId,
-      entryType: "LOAN_COLLECTED",
-      amount: row.long_term_loan_taken,
-      month,
-      year,
-      description: row.description || "Long term loan taken",
-      entryLabel: "LONG_TERM",
-    });
+  const loanGroups = [
+    {
+      bucket: "LONG_TERM",
+      taken: row.long_term_loan_taken,
+      interestCredit: row.long_term_interest_credit,
+      repayment: row.long_term_loan_repayment,
+      interestDebit: row.long_term_interest_debit,
+      label: "Long term",
+    },
+    {
+      bucket: "SOFT",
+      taken: row.soft_loan_taken,
+      interestCredit: row.soft_interest_credit,
+      repayment: row.soft_loan_repayment,
+      interestDebit: row.soft_interest_debit,
+      label: "Soft",
+    },
+    {
+      bucket: "COMMODITY",
+      taken: row.commodity_loan_taken,
+      interestCredit: row.commodity_interest_credit,
+      repayment: row.commodity_loan_repayment,
+      interestDebit: row.commodity_interest_debit,
+      label: "Commodity",
+    },
+  ];
 
-    await tx.memberLoanBalance.update({
-      where: {
-        member_id_loan_bucket_type: {
-          member_id: memberId,
-          loan_bucket_type: "LONG_TERM",
-        },
-      },
-      data: {
-        principal_balance: { increment: row.long_term_loan_taken },
-        total_balance: { increment: row.long_term_loan_taken },
-        last_updated_by: staffUserId,
-      },
-    });
+  for (const loan of loanGroups) {
+    if (loan.taken > 0) {
+      await createLedger({
+        tx,
+        memberId,
+        staffUserId,
+        entryType: "LOAN_COLLECTED",
+        amount: loan.taken,
+        month,
+        year,
+        description: row.description || `${loan.label} loan principal taken`,
+        entryLabel: loan.bucket,
+      });
 
-    entries.push("LONG_TERM_LOAN_TAKEN");
-  }
+      await updateLoanBalance({
+        tx,
+        memberId,
+        bucket: loan.bucket,
+        principalDelta: loan.taken,
+        totalDelta: loan.taken,
+        staffUserId,
+      });
 
-  if (row.long_term_loan_repayment > 0) {
-    const current = await tx.memberLoanBalance.findUnique({
-      where: {
-        member_id_loan_bucket_type: {
-          member_id: memberId,
-          loan_bucket_type: "LONG_TERM",
-        },
-      },
-    });
-
-    if (Number(row.long_term_loan_repayment) > Number(current.principal_balance || 0)) {
-      throw new Error(`Long term repayment exceeds current balance for ${row.staff_no}`);
+      entries.push(`${loan.bucket}_LOAN_TAKEN`);
     }
 
-    await createLedger({
-      tx,
-      memberId,
-      staffUserId,
-      entryType: "LOAN_REPAYMENT",
-      amount: row.long_term_loan_repayment,
-      month,
-      year,
-      description: row.description || "Long term repayment",
-      entryLabel: "LONG_TERM",
-    });
+    if (loan.interestCredit > 0) {
+      await createLedger({
+        tx,
+        memberId,
+        staffUserId,
+        entryType: "LOAN_COLLECTED",
+        amount: loan.interestCredit,
+        month,
+        year,
+        description: row.description || `${loan.label} loan interest credit`,
+        entryLabel: `${loan.bucket}_INTEREST`,
+      });
 
-    await tx.memberLoanBalance.update({
-      where: {
-        member_id_loan_bucket_type: {
-          member_id: memberId,
-          loan_bucket_type: "LONG_TERM",
-        },
-      },
-      data: {
-        principal_balance: { decrement: row.long_term_loan_repayment },
-        total_balance: { decrement: row.long_term_loan_repayment },
-        last_updated_by: staffUserId,
-      },
-    });
+      await updateLoanBalance({
+        tx,
+        memberId,
+        bucket: loan.bucket,
+        interestDelta: loan.interestCredit,
+        totalDelta: loan.interestCredit,
+        staffUserId,
+      });
 
-    entries.push("LONG_TERM_REPAYMENT");
-  }
-
-  if (row.soft_loan_taken > 0) {
-    await createLedger({
-      tx,
-      memberId,
-      staffUserId,
-      entryType: "LOAN_COLLECTED",
-      amount: row.soft_loan_taken,
-      month,
-      year,
-      description: row.description || "Soft loan taken",
-      entryLabel: "SOFT",
-    });
-
-    await tx.memberLoanBalance.update({
-      where: {
-        member_id_loan_bucket_type: {
-          member_id: memberId,
-          loan_bucket_type: "SOFT",
-        },
-      },
-      data: {
-        principal_balance: { increment: row.soft_loan_taken },
-        total_balance: { increment: row.soft_loan_taken },
-        last_updated_by: staffUserId,
-      },
-    });
-
-    entries.push("SOFT_LOAN_TAKEN");
-  }
-
-  if (row.soft_loan_repayment > 0) {
-    const current = await tx.memberLoanBalance.findUnique({
-      where: {
-        member_id_loan_bucket_type: {
-          member_id: memberId,
-          loan_bucket_type: "SOFT",
-        },
-      },
-    });
-
-    if (Number(row.soft_loan_repayment) > Number(current.principal_balance || 0)) {
-      throw new Error(`Soft repayment exceeds current balance for ${row.staff_no}`);
+      entries.push(`${loan.bucket}_INTEREST_CREDIT`);
     }
 
-    await createLedger({
-      tx,
-      memberId,
-      staffUserId,
-      entryType: "LOAN_REPAYMENT",
-      amount: row.soft_loan_repayment,
-      month,
-      year,
-      description: row.description || "Soft repayment",
-      entryLabel: "SOFT",
-    });
+    if (loan.repayment > 0) {
+      await createLedger({
+        tx,
+        memberId,
+        staffUserId,
+        entryType: "LOAN_REPAYMENT",
+        amount: loan.repayment,
+        month,
+        year,
+        description: row.description || `${loan.label} principal repayment`,
+        entryLabel: loan.bucket,
+      });
 
-    await tx.memberLoanBalance.update({
-      where: {
-        member_id_loan_bucket_type: {
-          member_id: memberId,
-          loan_bucket_type: "SOFT",
-        },
-      },
-      data: {
-        principal_balance: { decrement: row.soft_loan_repayment },
-        total_balance: { decrement: row.soft_loan_repayment },
-        last_updated_by: staffUserId,
-      },
-    });
+      await updateLoanBalance({
+        tx,
+        memberId,
+        bucket: loan.bucket,
+        principalDelta: -loan.repayment,
+        totalDelta: -loan.repayment,
+        staffUserId,
+      });
 
-    entries.push("SOFT_REPAYMENT");
-  }
-
-  if (row.commodity_loan_taken > 0) {
-    await createLedger({
-      tx,
-      memberId,
-      staffUserId,
-      entryType: "LOAN_COLLECTED",
-      amount: row.commodity_loan_taken,
-      month,
-      year,
-      description: row.description || "Commodity loan taken",
-      entryLabel: "COMMODITY",
-    });
-
-    await tx.memberLoanBalance.update({
-      where: {
-        member_id_loan_bucket_type: {
-          member_id: memberId,
-          loan_bucket_type: "COMMODITY",
-        },
-      },
-      data: {
-        principal_balance: { increment: row.commodity_loan_taken },
-        total_balance: { increment: row.commodity_loan_taken },
-        last_updated_by: staffUserId,
-      },
-    });
-
-    entries.push("COMMODITY_LOAN_TAKEN");
-  }
-
-  if (row.commodity_loan_repayment > 0) {
-    const current = await tx.memberLoanBalance.findUnique({
-      where: {
-        member_id_loan_bucket_type: {
-          member_id: memberId,
-          loan_bucket_type: "COMMODITY",
-        },
-      },
-    });
-
-    if (Number(row.commodity_loan_repayment) > Number(current.principal_balance || 0)) {
-      throw new Error(`Commodity repayment exceeds current balance for ${row.staff_no}`);
+      entries.push(`${loan.bucket}_PRINCIPAL_REPAYMENT`);
     }
 
-    await createLedger({
-      tx,
-      memberId,
-      staffUserId,
-      entryType: "LOAN_REPAYMENT",
-      amount: row.commodity_loan_repayment,
-      month,
-      year,
-      description: row.description || "Commodity repayment",
-      entryLabel: "COMMODITY",
-    });
+    if (loan.interestDebit > 0) {
+      await createLedger({
+        tx,
+        memberId,
+        staffUserId,
+        entryType: "LOAN_INTEREST_DEDUCTION",
+        amount: loan.interestDebit,
+        month,
+        year,
+        description: row.description || `${loan.label} interest deduction`,
+        entryLabel: loan.bucket,
+      });
 
-    await tx.memberLoanBalance.update({
-      where: {
-        member_id_loan_bucket_type: {
-          member_id: memberId,
-          loan_bucket_type: "COMMODITY",
-        },
-      },
-      data: {
-        principal_balance: { decrement: row.commodity_loan_repayment },
-        total_balance: { decrement: row.commodity_loan_repayment },
-        last_updated_by: staffUserId,
-      },
-    });
+      await updateLoanBalance({
+        tx,
+        memberId,
+        bucket: loan.bucket,
+        interestDelta: -loan.interestDebit,
+        totalDelta: -loan.interestDebit,
+        staffUserId,
+      });
 
-    entries.push("COMMODITY_REPAYMENT");
+      entries.push(`${loan.bucket}_INTEREST_DEBIT`);
+    }
   }
 
   if (row.charges > 0) {
@@ -709,17 +712,28 @@ const createMonthlyPostingRow = async (tx, batchId, row, entries) => {
       member_id: row.member.id,
       staff_no: row.staff_no,
       posting_date: row.posting_date_obj,
+
       shares_credit: row.shares_credit,
       savings_debit: row.savings_debit,
       savings_credit: row.savings_credit,
       special_savings_debit: row.special_savings_debit,
       special_savings_credit: row.special_savings_credit,
+
       long_term_loan_taken: row.long_term_loan_taken,
+      long_term_interest_credit: row.long_term_interest_credit,
       long_term_loan_repayment: row.long_term_loan_repayment,
+      long_term_interest_debit: row.long_term_interest_debit,
+
       soft_loan_taken: row.soft_loan_taken,
+      soft_interest_credit: row.soft_interest_credit,
       soft_loan_repayment: row.soft_loan_repayment,
+      soft_interest_debit: row.soft_interest_debit,
+
       commodity_loan_taken: row.commodity_loan_taken,
+      commodity_interest_credit: row.commodity_interest_credit,
       commodity_loan_repayment: row.commodity_loan_repayment,
+      commodity_interest_debit: row.commodity_interest_debit,
+
       charges: row.charges,
       charges_label: row.charges_label || null,
       fines: row.fines,
@@ -966,17 +980,28 @@ const updateMonthlyPostingRow = async (req, res) => {
 
     const newData = {
       posting_date: postingDateObj,
+
       shares_credit: numberValue(req.body.shares_credit ?? existingRow.shares_credit),
       savings_debit: numberValue(req.body.savings_debit ?? existingRow.savings_debit),
       savings_credit: numberValue(req.body.savings_credit ?? existingRow.savings_credit),
       special_savings_debit: numberValue(req.body.special_savings_debit ?? existingRow.special_savings_debit),
       special_savings_credit: numberValue(req.body.special_savings_credit ?? existingRow.special_savings_credit),
+
       long_term_loan_taken: numberValue(req.body.long_term_loan_taken ?? existingRow.long_term_loan_taken),
+      long_term_interest_credit: numberValue(req.body.long_term_interest_credit ?? existingRow.long_term_interest_credit),
       long_term_loan_repayment: numberValue(req.body.long_term_loan_repayment ?? existingRow.long_term_loan_repayment),
+      long_term_interest_debit: numberValue(req.body.long_term_interest_debit ?? existingRow.long_term_interest_debit),
+
       soft_loan_taken: numberValue(req.body.soft_loan_taken ?? existingRow.soft_loan_taken),
+      soft_interest_credit: numberValue(req.body.soft_interest_credit ?? existingRow.soft_interest_credit),
       soft_loan_repayment: numberValue(req.body.soft_loan_repayment ?? existingRow.soft_loan_repayment),
+      soft_interest_debit: numberValue(req.body.soft_interest_debit ?? existingRow.soft_interest_debit),
+
       commodity_loan_taken: numberValue(req.body.commodity_loan_taken ?? existingRow.commodity_loan_taken),
+      commodity_interest_credit: numberValue(req.body.commodity_interest_credit ?? existingRow.commodity_interest_credit),
       commodity_loan_repayment: numberValue(req.body.commodity_loan_repayment ?? existingRow.commodity_loan_repayment),
+      commodity_interest_debit: numberValue(req.body.commodity_interest_debit ?? existingRow.commodity_interest_debit),
+
       charges: numberValue(req.body.charges ?? existingRow.charges),
       charges_label: normalizeValue(req.body.charges_label ?? existingRow.charges_label),
       fines: numberValue(req.body.fines ?? existingRow.fines),
@@ -991,12 +1016,22 @@ const updateMonthlyPostingRow = async (req, res) => {
       "savings_credit",
       "special_savings_debit",
       "special_savings_credit",
+
       "long_term_loan_taken",
+      "long_term_interest_credit",
       "long_term_loan_repayment",
+      "long_term_interest_debit",
+
       "soft_loan_taken",
+      "soft_interest_credit",
       "soft_loan_repayment",
+      "soft_interest_debit",
+
       "commodity_loan_taken",
+      "commodity_interest_credit",
       "commodity_loan_repayment",
+      "commodity_interest_debit",
+
       "charges",
       "fines",
       "adjustment",
@@ -1074,45 +1109,6 @@ const updateMonthlyPostingRow = async (req, res) => {
         });
       };
 
-      const updateLoanBalance = async (bucket, principalDelta, totalDelta) => {
-        const current = await tx.memberLoanBalance.findUnique({
-          where: {
-            member_id_loan_bucket_type: {
-              member_id: memberId,
-              loan_bucket_type: bucket,
-            },
-          },
-        });
-
-        if (principalDelta < 0 && Number(current.principal_balance || 0) < Math.abs(principalDelta)) {
-          throw new Error(`${bucket} correction will make principal balance negative`);
-        }
-
-        if (totalDelta < 0 && Number(current.total_balance || 0) < Math.abs(totalDelta)) {
-          throw new Error(`${bucket} correction will make total balance negative`);
-        }
-
-        await tx.memberLoanBalance.update({
-          where: {
-            member_id_loan_bucket_type: {
-              member_id: memberId,
-              loan_bucket_type: bucket,
-            },
-          },
-          data: {
-            principal_balance:
-              principalDelta >= 0
-                ? { increment: principalDelta }
-                : { decrement: Math.abs(principalDelta) },
-            total_balance:
-              totalDelta >= 0
-                ? { increment: totalDelta }
-                : { decrement: Math.abs(totalDelta) },
-            last_updated_by: req.user.id,
-          },
-        });
-      };
-
       const sharesDelta = delta("shares_credit");
       if (sharesDelta !== 0) {
         await postCorrection("SHARES_CORRECTION", "SHARES", sharesDelta);
@@ -1177,22 +1173,80 @@ const updateMonthlyPostingRow = async (req, res) => {
       }
 
       const loanCorrections = [
-        ["LONG_TERM", "long_term_loan_taken", "long_term_loan_repayment"],
-        ["SOFT", "soft_loan_taken", "soft_loan_repayment"],
-        ["COMMODITY", "commodity_loan_taken", "commodity_loan_repayment"],
+        {
+          bucket: "LONG_TERM",
+          takenField: "long_term_loan_taken",
+          interestCreditField: "long_term_interest_credit",
+          repaymentField: "long_term_loan_repayment",
+          interestDebitField: "long_term_interest_debit",
+        },
+        {
+          bucket: "SOFT",
+          takenField: "soft_loan_taken",
+          interestCreditField: "soft_interest_credit",
+          repaymentField: "soft_loan_repayment",
+          interestDebitField: "soft_interest_debit",
+        },
+        {
+          bucket: "COMMODITY",
+          takenField: "commodity_loan_taken",
+          interestCreditField: "commodity_interest_credit",
+          repaymentField: "commodity_loan_repayment",
+          interestDebitField: "commodity_interest_debit",
+        },
       ];
 
-      for (const [bucket, takenField, repaymentField] of loanCorrections) {
-        const takenDelta = delta(takenField);
+      for (const loan of loanCorrections) {
+        const takenDelta = delta(loan.takenField);
         if (takenDelta !== 0) {
-          await postCorrection(`${bucket}_LOAN_TAKEN_CORRECTION`, "LOAN_COLLECTED", takenDelta, bucket);
-          await updateLoanBalance(bucket, takenDelta, takenDelta);
+          await postCorrection(`${loan.bucket}_LOAN_TAKEN_CORRECTION`, "LOAN_COLLECTED", takenDelta, loan.bucket);
+          await updateLoanBalance({
+            tx,
+            memberId,
+            bucket: loan.bucket,
+            principalDelta: takenDelta,
+            totalDelta: takenDelta,
+            staffUserId: req.user.id,
+          });
         }
 
-        const repaymentDelta = delta(repaymentField);
+        const interestCreditDelta = delta(loan.interestCreditField);
+        if (interestCreditDelta !== 0) {
+          await postCorrection(`${loan.bucket}_INTEREST_CREDIT_CORRECTION`, "LOAN_COLLECTED", interestCreditDelta, `${loan.bucket}_INTEREST`);
+          await updateLoanBalance({
+            tx,
+            memberId,
+            bucket: loan.bucket,
+            interestDelta: interestCreditDelta,
+            totalDelta: interestCreditDelta,
+            staffUserId: req.user.id,
+          });
+        }
+
+        const repaymentDelta = delta(loan.repaymentField);
         if (repaymentDelta !== 0) {
-          await postCorrection(`${bucket}_REPAYMENT_CORRECTION`, "LOAN_REPAYMENT", repaymentDelta, bucket);
-          await updateLoanBalance(bucket, -repaymentDelta, -repaymentDelta);
+          await postCorrection(`${loan.bucket}_PRINCIPAL_REPAYMENT_CORRECTION`, "LOAN_REPAYMENT", repaymentDelta, loan.bucket);
+          await updateLoanBalance({
+            tx,
+            memberId,
+            bucket: loan.bucket,
+            principalDelta: -repaymentDelta,
+            totalDelta: -repaymentDelta,
+            staffUserId: req.user.id,
+          });
+        }
+
+        const interestDebitDelta = delta(loan.interestDebitField);
+        if (interestDebitDelta !== 0) {
+          await postCorrection(`${loan.bucket}_INTEREST_DEBIT_CORRECTION`, "LOAN_INTEREST_DEDUCTION", interestDebitDelta, loan.bucket);
+          await updateLoanBalance({
+            tx,
+            memberId,
+            bucket: loan.bucket,
+            interestDelta: -interestDebitDelta,
+            totalDelta: -interestDebitDelta,
+            staffUserId: req.user.id,
+          });
         }
       }
 
