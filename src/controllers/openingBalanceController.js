@@ -22,12 +22,28 @@ const parseSpreadsheet = (filePath) => {
 
 const buildRow = async (row, rowNumber) => {
   const staff_no = normalizeValue(row.staff_no);
+
   const savings_balance = numberValue(row.savings_balance);
   const special_savings_balance = numberValue(row.special_savings_balance);
   const shares_balance = numberValue(row.shares_balance);
-  const long_term_balance = numberValue(row.long_term_balance);
-  const soft_balance = numberValue(row.soft_balance);
-  const commodity_balance = numberValue(row.commodity_balance);
+
+  // New proper principal + interest fields
+  const long_term_principal_balance = numberValue(
+    row.long_term_principal_balance ?? row.long_term_balance
+  );
+  const long_term_interest_balance = numberValue(row.long_term_interest_balance);
+
+  const soft_principal_balance = numberValue(
+    row.soft_principal_balance ?? row.soft_balance
+  );
+  const soft_interest_balance = numberValue(row.soft_interest_balance);
+
+  const commodity_principal_balance = numberValue(
+    row.commodity_principal_balance ?? row.commodity_balance
+  );
+  const commodity_interest_balance = numberValue(row.commodity_interest_balance);
+
+  const description = normalizeValue(row.description);
 
   const reasons = [];
 
@@ -37,9 +53,12 @@ const buildRow = async (row, rowNumber) => {
     ["savings_balance", savings_balance],
     ["special_savings_balance", special_savings_balance],
     ["shares_balance", shares_balance],
-    ["long_term_balance", long_term_balance],
-    ["soft_balance", soft_balance],
-    ["commodity_balance", commodity_balance],
+    ["long_term_principal_balance", long_term_principal_balance],
+    ["long_term_interest_balance", long_term_interest_balance],
+    ["soft_principal_balance", soft_principal_balance],
+    ["soft_interest_balance", soft_interest_balance],
+    ["commodity_principal_balance", commodity_principal_balance],
+    ["commodity_interest_balance", commodity_interest_balance],
   ];
 
   numericChecks.forEach(([label, value]) => {
@@ -67,12 +86,26 @@ const buildRow = async (row, rowNumber) => {
   return {
     row_number: rowNumber,
     staff_no,
+
     savings_balance,
     special_savings_balance,
     shares_balance,
-    long_term_balance,
-    soft_balance,
-    commodity_balance,
+
+    long_term_principal_balance,
+    long_term_interest_balance,
+    long_term_total_balance:
+      long_term_principal_balance + long_term_interest_balance,
+
+    soft_principal_balance,
+    soft_interest_balance,
+    soft_total_balance: soft_principal_balance + soft_interest_balance,
+
+    commodity_principal_balance,
+    commodity_interest_balance,
+    commodity_total_balance:
+      commodity_principal_balance + commodity_interest_balance,
+
+    description,
     member,
     status: reasons.length ? "invalid" : "valid",
     reasons,
@@ -117,12 +150,24 @@ const previewOpeningBalances = async (req, res) => {
       rows: previewRows.map((r) => ({
         row_number: r.row_number,
         staff_no: r.staff_no,
+
         savings_balance: r.savings_balance,
         special_savings_balance: r.special_savings_balance,
         shares_balance: r.shares_balance,
-        long_term_balance: r.long_term_balance,
-        soft_balance: r.soft_balance,
-        commodity_balance: r.commodity_balance,
+
+        long_term_principal_balance: r.long_term_principal_balance,
+        long_term_interest_balance: r.long_term_interest_balance,
+        long_term_total_balance: r.long_term_total_balance,
+
+        soft_principal_balance: r.soft_principal_balance,
+        soft_interest_balance: r.soft_interest_balance,
+        soft_total_balance: r.soft_total_balance,
+
+        commodity_principal_balance: r.commodity_principal_balance,
+        commodity_interest_balance: r.commodity_interest_balance,
+        commodity_total_balance: r.commodity_total_balance,
+
+        description: r.description,
         status: r.status,
         reasons: r.reasons,
       })),
@@ -143,9 +188,12 @@ const upsertLoanBalanceBucket = async ({
   tx,
   memberId,
   bucketType,
-  balance,
+  principalBalance,
+  interestBalance,
   updatedBy,
 }) => {
+  const totalBalance = Number(principalBalance || 0) + Number(interestBalance || 0);
+
   const existing = await tx.memberLoanBalance.findUnique({
     where: {
       member_id_loan_bucket_type: {
@@ -164,9 +212,9 @@ const upsertLoanBalanceBucket = async ({
         },
       },
       data: {
-        principal_balance: balance,
-        interest_balance: 0,
-        total_balance: balance,
+        principal_balance: principalBalance,
+        interest_balance: interestBalance,
+        total_balance: totalBalance,
         last_updated_by: updatedBy,
       },
     });
@@ -176,9 +224,9 @@ const upsertLoanBalanceBucket = async ({
     data: {
       member_id: memberId,
       loan_bucket_type: bucketType,
-      principal_balance: balance,
-      interest_balance: 0,
-      total_balance: balance,
+      principal_balance: principalBalance,
+      interest_balance: interestBalance,
+      total_balance: totalBalance,
       last_updated_by: updatedBy,
     },
   });
@@ -260,7 +308,8 @@ const importOpeningBalances = async (req, res) => {
             tx,
             memberId: row.member.id,
             bucketType: "LONG_TERM",
-            balance: row.long_term_balance,
+            principalBalance: row.long_term_principal_balance,
+            interestBalance: row.long_term_interest_balance,
             updatedBy: req.user.id,
           });
 
@@ -268,7 +317,8 @@ const importOpeningBalances = async (req, res) => {
             tx,
             memberId: row.member.id,
             bucketType: "SOFT",
-            balance: row.soft_balance,
+            principalBalance: row.soft_principal_balance,
+            interestBalance: row.soft_interest_balance,
             updatedBy: req.user.id,
           });
 
@@ -276,7 +326,8 @@ const importOpeningBalances = async (req, res) => {
             tx,
             memberId: row.member.id,
             bucketType: "COMMODITY",
-            balance: row.commodity_balance,
+            principalBalance: row.commodity_principal_balance,
+            interestBalance: row.commodity_interest_balance,
             updatedBy: req.user.id,
           });
         });
@@ -284,12 +335,22 @@ const importOpeningBalances = async (req, res) => {
         imported.push({
           row_number: row.row_number,
           staff_no: row.staff_no,
+
           savings_balance: row.savings_balance,
           special_savings_balance: row.special_savings_balance,
           shares_balance: row.shares_balance,
-          long_term_balance: row.long_term_balance,
-          soft_balance: row.soft_balance,
-          commodity_balance: row.commodity_balance,
+
+          long_term_principal_balance: row.long_term_principal_balance,
+          long_term_interest_balance: row.long_term_interest_balance,
+          long_term_total_balance: row.long_term_total_balance,
+
+          soft_principal_balance: row.soft_principal_balance,
+          soft_interest_balance: row.soft_interest_balance,
+          soft_total_balance: row.soft_total_balance,
+
+          commodity_principal_balance: row.commodity_principal_balance,
+          commodity_interest_balance: row.commodity_interest_balance,
+          commodity_total_balance: row.commodity_total_balance,
         });
       } catch (error) {
         invalidRows.push({
