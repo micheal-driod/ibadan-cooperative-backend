@@ -13,14 +13,11 @@ const getMemberDashboard = async (req, res) => {
       include: {
         savings_account: true,
         shares_account: true,
+        loan_balances: true,
         loans: {
           where: { status: "active" },
-          include: {
-            loan_type: true,
-          },
-          orderBy: {
-            created_at: "desc",
-          },
+          include: { loan_type: true },
+          orderBy: { created_at: "desc" },
         },
       },
     });
@@ -38,22 +35,42 @@ const getMemberDashboard = async (req, res) => {
     const normalSavings = Number(member.savings_account?.current_balance || 0);
     const specialSavings = Number(member.savings_account?.special_savings_balance || 0);
 
-    const totalPrincipalBalance = member.loans.reduce(
-      (sum, loan) => sum + Number(loan.remaining_principal_balance || 0),
+    const loanBalances = member.loan_balances || [];
+
+    const totalPrincipalBalance = loanBalances.reduce(
+      (sum, loan) => sum + Number(loan.principal_balance || 0),
       0
     );
 
-    const totalInterestBalance = member.loans.reduce(
-      (sum, loan) => sum + Number(loan.remaining_interest_balance || 0),
+    const totalInterestBalance = loanBalances.reduce(
+      (sum, loan) => sum + Number(loan.interest_balance || 0),
       0
     );
 
-    const totalLoanBalance = member.loans.reduce(
-      (sum, loan) => sum + Number(loan.remaining_total_balance || 0),
+    const totalLoanBalance = loanBalances.reduce(
+      (sum, loan) => sum + Number(loan.total_balance || 0),
       0
     );
 
-    const activeLoans = member.loans.map((loan) => ({
+    const openingBalanceLoans = loanBalances
+      .filter((loan) => Number(loan.total_balance || 0) > 0)
+      .map((loan) => ({
+        id: loan.id,
+        loan_type: loan.loan_bucket_type,
+        principal_amount: loan.principal_balance,
+        interest_amount: loan.interest_balance,
+        total_payable: loan.total_balance,
+        monthly_deduction: 0,
+        duration_months: 0,
+        remaining_principal_balance: loan.principal_balance,
+        remaining_interest_balance: loan.interest_balance,
+        remaining_total_balance: loan.total_balance,
+        status: "active",
+        approved_at: loan.created_at,
+        source: "opening_balance",
+      }));
+
+    const approvedActiveLoans = member.loans.map((loan) => ({
       id: loan.id,
       loan_type: loan.loan_type.name,
       principal_amount: loan.principal_amount,
@@ -66,6 +83,7 @@ const getMemberDashboard = async (req, res) => {
       remaining_total_balance: loan.remaining_total_balance,
       status: loan.status,
       approved_at: loan.approved_at,
+      source: "loan_approval",
     }));
 
     return res.status(200).json({
@@ -95,7 +113,8 @@ const getMemberDashboard = async (req, res) => {
           remaining_interest_balance: totalInterestBalance,
           remaining_total_balance: totalLoanBalance,
         },
-        active_loans: activeLoans,
+        loan_balances: loanBalances,
+        active_loans: openingBalanceLoans.length ? openingBalanceLoans : approvedActiveLoans,
         recent_ledger: recentLedger,
       },
     });
