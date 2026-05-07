@@ -15,17 +15,19 @@ const applyForLoan = async (req, res) => {
   try {
     const memberId = req.user.id;
 
-    const {
-      loan_type_id,
-      loanTypeId,
-      requested_amount,
-      amount,
-      duration_months,
-      loan_purpose,
-      purpose,
-      guarantor1,
-      guarantor2,
-    } = req.body;
+   const {
+  loan_type_id,
+  loanTypeId,
+  requested_amount,
+  amount,
+  duration_months,
+  loan_purpose,
+  purpose,
+  guarantor1,
+  guarantor2,
+  guarantor_1,
+  guarantor_2,
+} = req.body;
 
     const finalLoanTypeId = Number(loan_type_id || loanTypeId);
     const finalAmount = Number(requested_amount || amount);
@@ -38,10 +40,13 @@ const applyForLoan = async (req, res) => {
       });
     }
 
-    const guarantorInputs = [
-      { guarantor_no: 1, staff_no: guarantor1?.staff_no },
-      { guarantor_no: 2, staff_no: guarantor2?.staff_no },
-    ];
+    const finalGuarantor1 = guarantor1 || guarantor_1 || {};
+const finalGuarantor2 = guarantor2 || guarantor_2 || {};
+
+const guarantorInputs = [
+  { guarantor_no: 1, staff_no: finalGuarantor1?.staff_no },
+  { guarantor_no: 2, staff_no: finalGuarantor2?.staff_no },
+];
 
     for (const guarantorInput of guarantorInputs) {
       if (!guarantorInput.staff_no) {
