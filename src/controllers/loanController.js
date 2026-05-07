@@ -146,24 +146,25 @@ const guarantorInputs = [
         },
       });
 
-      for (const item of guarantorMembers) {
-        const guarantorMember = item.member;
+     for (const item of guarantorMembers) {
+  const guarantorMember = item.member;
 
-        await tx.loanApplicationGuarantor.create({
-  data: {
-    loan_application: {
-      connect: { id: application.id },
+  await tx.loanApplicationGuarantor.create({
+    data: {
+      loan_application: {
+        connect: { id: application.id },
+      },
+      guarantor_no: item.guarantor_no,
+      full_name:
+        `${guarantorMember.first_name || ""} ${guarantorMember.middle_name || ""} ${guarantorMember.last_name || ""}`
+          .replace(/\s+/g, " ")
+          .trim() || "N/A",
+      staff_no: guarantorMember.staff_no || "N/A",
+      phone: guarantorMember.phone || "N/A",
+      grade_level: guarantorMember.grade_level || "N/A",
     },
-    guarantor_no: item.guarantor_no,
-    full_name: `${guarantorMember.first_name || ""} ${guarantorMember.middle_name || ""} ${guarantorMember.last_name || ""}`
-      .replace(/\s+/g, " ")
-      .trim(),
-    staff_no: guarantorMember.staff_no,
-    phone: guarantorMember.phone || null,
-    grade_level: guarantorMember.grade_level || null,
-  },
-});
-      }
+  });
+}
 
       return tx.loanApplication.findUnique({
         where: { id: application.id },
