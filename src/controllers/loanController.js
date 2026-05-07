@@ -104,6 +104,7 @@ const getAllLoanApplications = async (req, res) => {
         loan_type: true,
         member: true,
         loan: true,
+        guarantors: true,
       },
       orderBy: { created_at: "desc" },
     });
@@ -131,6 +132,7 @@ const getLoanApplicationById = async (req, res) => {
         loan_type: true,
         member: true,
         loan: true,
+        guarantors: true,
       },
     });
 
@@ -173,6 +175,7 @@ const markLoanAsViewed = async (req, res) => {
         loan_type: true,
         member: true,
         loan: true,
+        guarantors: true,
       },
     });
 
@@ -266,11 +269,11 @@ const approveLoanApplication = async (req, res) => {
           },
         },
         update: {
-          principal_balance: existingApplication.requested_amount,
-          interest_balance: existingApplication.interest_amount,
-          total_balance: existingApplication.total_repayment,
-          last_updated_by: req.user.id,
-        },
+            principal_balance: { increment: existingApplication.requested_amount },
+            interest_balance: { increment: existingApplication.interest_amount },
+            total_balance: { increment: existingApplication.total_repayment },
+            last_updated_by: req.user.id,
+},
         create: {
           member_id: existingApplication.member_id,
           loan_bucket_type: bucketType,
@@ -335,6 +338,7 @@ const rejectLoanApplication = async (req, res) => {
         loan_type: true,
         member: true,
         loan: true,
+        guarantors: true,
       },
     });
 
