@@ -150,17 +150,19 @@ const guarantorInputs = [
         const guarantorMember = item.member;
 
         await tx.loanApplicationGuarantor.create({
-          data: {
-            loan_application_id: application.id,
-            guarantor_no: item.guarantor_no,
-            full_name: `${guarantorMember.first_name || ""} ${guarantorMember.middle_name || ""} ${guarantorMember.last_name || ""}`
-              .replace(/\s+/g, " ")
-              .trim(),
-            staff_no: guarantorMember.staff_no,
-            phone: guarantorMember.phone || null,
-            grade_level: guarantorMember.grade_level || null,
-          },
-        });
+  data: {
+    loan_application: {
+      connect: { id: application.id },
+    },
+    guarantor_no: item.guarantor_no,
+    full_name: `${guarantorMember.first_name || ""} ${guarantorMember.middle_name || ""} ${guarantorMember.last_name || ""}`
+      .replace(/\s+/g, " ")
+      .trim(),
+    staff_no: guarantorMember.staff_no,
+    phone: guarantorMember.phone || null,
+    grade_level: guarantorMember.grade_level || null,
+  },
+});
       }
 
       return tx.loanApplication.findUnique({
