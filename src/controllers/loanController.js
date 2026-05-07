@@ -23,6 +23,8 @@ const applyForLoan = async (req, res) => {
       duration_months,
       loan_purpose,
       purpose,
+      guarantor1,
+      guarantor2,
     } = req.body;
 
     const finalLoanTypeId = Number(loan_type_id || loanTypeId);
@@ -34,6 +36,46 @@ const applyForLoan = async (req, res) => {
       return res.status(400).json({
         message: "loan_type_id, requested_amount and loan_purpose are required",
       });
+    }
+
+    const guarantorInputs = [
+      { guarantor_no: 1, staff_no: guarantor1?.staff_no },
+      { guarantor_no: 2, staff_no: guarantor2?.staff_no },
+    ];
+
+    for (const guarantorInput of guarantorInputs) {
+      if (!guarantorInput.staff_no) {
+        return res.status(400).json({
+          message: `Guarantor ${guarantorInput.guarantor_no} staff number is required`,
+        });
+      }
+    }
+
+    if (
+      String(guarantorInputs[0].staff_no).trim() ===
+      String(guarantorInputs[1].staff_no).trim()
+    ) {
+      return res.status(400).json({
+        message: "Guarantor 1 and Guarantor 2 cannot be the same member",
+      });
+    }
+
+    const member = await prisma.member.findUnique({
+      where: { id: memberId },
+    });
+
+    if (!member) {
+      return res.status(404).json({
+        message: "Member not found",
+      });
+    }
+
+    for (const guarantorInput of guarantorInputs) {
+      if (String(guarantorInput.staff_no).trim() === String(member.staff_no).trim()) {
+        return res.status(400).json({
+          message: `Guarantor ${guarantorInput.guarantor_no} cannot be the loan applicant`,
+        });
+      }
     }
 
     const loanType = await prisma.loanType.findUnique({
@@ -59,28 +101,71 @@ const applyForLoan = async (req, res) => {
       });
     }
 
+    const guarantorMembers = [];
+
+    for (const guarantorInput of guarantorInputs) {
+      const guarantorMember = await prisma.member.findUnique({
+        where: { staff_no: String(guarantorInput.staff_no).trim() },
+      });
+
+      if (!guarantorMember || guarantorMember.status !== "active") {
+        return res.status(400).json({
+          message: `Guarantor ${guarantorInput.guarantor_no} not found or inactive`,
+        });
+      }
+
+      guarantorMembers.push({
+        guarantor_no: guarantorInput.guarantor_no,
+        member: guarantorMember,
+      });
+    }
+
     const interestRate = Number(loanType.interest_rate);
     const interestAmount = (finalAmount * interestRate) / 100;
     const totalRepayment = finalAmount + interestAmount;
     const monthlyDeduction = totalRepayment / finalDuration;
 
-    const loanApplication = await prisma.loanApplication.create({
-      data: {
-        member_id: memberId,
-        loan_type_id: finalLoanTypeId,
-        requested_amount: finalAmount,
-        interest_rate: interestRate,
-        duration_months: finalDuration,
-        interest_amount: interestAmount,
-        total_repayment: totalRepayment,
-        monthly_deduction: monthlyDeduction,
-        loan_purpose: finalPurpose,
-        status: "submitted",
-      },
-      include: {
-        loan_type: true,
-        member: true,
-      },
+    const loanApplication = await prisma.$transaction(async (tx) => {
+      const application = await tx.loanApplication.create({
+        data: {
+          member_id: memberId,
+          loan_type_id: finalLoanTypeId,
+          requested_amount: finalAmount,
+          interest_rate: interestRate,
+          duration_months: finalDuration,
+          interest_amount: interestAmount,
+          total_repayment: totalRepayment,
+          monthly_deduction: monthlyDeduction,
+          loan_purpose: finalPurpose,
+          status: "submitted",
+        },
+      });
+
+      for (const item of guarantorMembers) {
+        const guarantorMember = item.member;
+
+        await tx.loanApplicationGuarantor.create({
+          data: {
+            loan_application_id: application.id,
+            guarantor_no: item.guarantor_no,
+            full_name: `${guarantorMember.first_name || ""} ${guarantorMember.middle_name || ""} ${guarantorMember.last_name || ""}`
+              .replace(/\s+/g, " ")
+              .trim(),
+            staff_no: guarantorMember.staff_no,
+            phone: guarantorMember.phone || null,
+            grade_level: guarantorMember.grade_level || null,
+          },
+        });
+      }
+
+      return tx.loanApplication.findUnique({
+        where: { id: application.id },
+        include: {
+          loan_type: true,
+          member: true,
+          guarantors: true,
+        },
+      });
     });
 
     return res.status(201).json({
@@ -201,6 +286,7 @@ const approveLoanApplication = async (req, res) => {
         loan_type: true,
         member: true,
         loan: true,
+        guarantors: true,
       },
     });
 
@@ -239,6 +325,7 @@ const approveLoanApplication = async (req, res) => {
         include: {
           loan_type: true,
           member: true,
+          guarantors: true,
         },
       });
 
@@ -269,11 +356,11 @@ const approveLoanApplication = async (req, res) => {
           },
         },
         update: {
-            principal_balance: { increment: existingApplication.requested_amount },
-            interest_balance: { increment: existingApplication.interest_amount },
-            total_balance: { increment: existingApplication.total_repayment },
-            last_updated_by: req.user.id,
-},
+          principal_balance: { increment: existingApplication.requested_amount },
+          interest_balance: { increment: existingApplication.interest_amount },
+          total_balance: { increment: existingApplication.total_repayment },
+          last_updated_by: req.user.id,
+        },
         create: {
           member_id: existingApplication.member_id,
           loan_bucket_type: bucketType,
@@ -361,7 +448,11 @@ const getAllActiveLoans = async (req, res) => {
       include: {
         member: true,
         loan_type: true,
-        loan_application: true,
+        loan_application: {
+          include: {
+            guarantors: true,
+          },
+        },
         approver: {
           select: {
             id: true,
@@ -392,7 +483,11 @@ const getActiveLoanById = async (req, res) => {
       include: {
         member: true,
         loan_type: true,
-        loan_application: true,
+        loan_application: {
+          include: {
+            guarantors: true,
+          },
+        },
         approver: {
           select: {
             id: true,
