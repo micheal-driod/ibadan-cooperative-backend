@@ -55,6 +55,7 @@ model Member {
   bank_name      String?
   account_name   String?
   account_number String?
+  passport_url String?
 
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt

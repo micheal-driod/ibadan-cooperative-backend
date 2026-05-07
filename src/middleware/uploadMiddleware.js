@@ -12,6 +12,7 @@ const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     cb(null, uploadDir);
   },
+
   filename: function (req, file, cb) {
     const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
     cb(null, `${uniqueSuffix}-${file.originalname}`);
@@ -19,11 +20,23 @@ const storage = multer.diskStorage({
 });
 
 const fileFilter = (req, file, cb) => {
-  const allowedExt = [".xlsx", ".csv"];
+  const allowedExt = [
+    ".xlsx",
+    ".csv",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+  ];
+
   const ext = path.extname(file.originalname).toLowerCase();
 
   if (!allowedExt.includes(ext)) {
-    return cb(new Error("Only .xlsx and .csv files are allowed"));
+    return cb(
+      new Error(
+        "Only .xlsx, .csv, .jpg, .jpeg, .png and .webp files are allowed"
+      )
+    );
   }
 
   cb(null, true);
@@ -32,6 +45,9 @@ const fileFilter = (req, file, cb) => {
 const upload = multer({
   storage,
   fileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+  },
 });
 
 module.exports = {

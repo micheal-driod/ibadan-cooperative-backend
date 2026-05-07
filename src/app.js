@@ -46,7 +46,7 @@ app.use("/api/bulk-onboarding", bulkOnboardingRoutes);
 app.use("/api/bulk-monthly-posting", bulkMonthlyPostingRoutes);
 app.use("/api/opening-balances", openingBalanceRoutes);
 app.use("/api/password-change-requests", passwordChangeRequestRoutes);
-
+app.use("/uploads", express.static("uploads"));
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, "0.0.0.0", () => {

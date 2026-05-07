@@ -37,6 +37,7 @@ const getMyProfile = async (req, res) => {
           select: {
             username: true,
             must_change_password: true,
+            passport_url: member.passport_url,
             is_active: true,
             last_login: true,
           },
@@ -276,10 +277,40 @@ const getMyPasswordChangeRequests = async (req, res) => {
     return res.status(500).json({ message: "Server error" });
   }
 };
+const uploadMyPassport = async (req, res) => {
+  try {
+    if (!req.user || req.user.type !== "member") {
+      return res.status(403).json({ message: "Only members can upload passport" });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ message: "Passport image is required" });
+    }
+
+    const passportUrl = `/uploads/${req.file.filename}`;
+
+    const updatedMember = await prisma.member.update({
+      where: { id: req.user.id },
+      data: {
+        passport_url: passportUrl,
+      },
+    });
+
+    return res.status(200).json({
+      message: "Passport uploaded successfully",
+      passport_url: passportUrl,
+      profile: updatedMember,
+    });
+  } catch (error) {
+    console.error("uploadMyPassport error:", error);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
 
 module.exports = {
   getMyProfile,
   updateMyProfile,
+  uploadMyPassport,
   submitPasswordChangeRequest,
   getMyPasswordChangeRequests,
 };
